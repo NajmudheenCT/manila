@@ -1,0 +1,47 @@
+---
+prelude: >
+    Add a new EMC Unity plugin in manila which allows user to create NFS/CIFS
+    share with a EMC Unity backend.
+features:
+  - |
+    Add a new Unity plugin in manila which allows user to create NFS/CIFS
+    share with a Unity backend.
+
+    Network topology supported: flat, Virtual LAN.
+
+    In detail, users are allowed to do following operation with EMC Unity
+    Storage Systems.
+
+    * Create/delete a NFS share.
+    * Create/delete a CIFS share.
+    * Extend the size of a share.
+    * Modify the host access privilege of a NFS share.
+    * Modify the user access privilege of a CIFS share.
+    * Take/Delete snapshot of a share.
+    * Create a new share from snapshot.
+
+
+    Following driver interfaces are implemented in the plugin.
+
+    * create_share: Create a share and export it based on the protocol used
+      (NFS or CIFS).
+    * create_share_from_snapshot: Create a share from a snapshot - clone a
+      snapshot.
+    * delete_share: Delete a share.
+    * extend_share: Extend the maximum size of a share.
+    * create_snapshot: Create a snapshot for the specified share.
+    * delete_snapshot: Delete the snapshot of the share.
+    * update_access: recover, add or delete user/host access to a share.
+    * allow_access: Allow access (read write/read only) of a user to a
+      CIFS share.  Allow access (read write/read only) of a host to a NFS
+      share.
+    * deny_access: Remove access (read write/read only) of a user from
+      a CIFS share.  Remove access (read write/read only) of a host from a
+      NFS share.
+    * ensure_share: Check whether share exists or not.
+    * update_share_stats: Retrieve share related statistics from Unity.
+    * get_network_allocatins_number: Returns number of network allocations for
+      creating VIFs.
+    * setup_server: Set up and configures share server with given network
+      parameters.
+    * teardown_server: Tear down the share server.

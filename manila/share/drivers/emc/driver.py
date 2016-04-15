@@ -26,9 +26,7 @@ from oslo_log import log
 from manila.share import driver
 from manila.share.drivers.emc import plugin_manager as manager
 
-
 LOG = log.getLogger(__name__)
-
 
 EMC_NAS_OPTS = [
     cfg.StrOpt('emc_nas_login',
@@ -46,13 +44,16 @@ EMC_NAS_OPTS = [
     cfg.StrOpt('emc_share_backend',
                help='Share backend.'),
     cfg.StrOpt('emc_nas_server_container',
-               default='server_2',
                help='Container of share servers.'),
-    cfg.StrOpt('emc_nas_pool_names',
-               deprecated_name='emc_nas_pool_name',
-               help='EMC pool names.'),
+    cfg.ListOpt('emc_interface_ports',
+                help='Comma separated ports for interface creation.'),
+    cfg.ListOpt('emc_nas_pool_names',
+                deprecated_name='emc_nas_pool_name',
+                help='EMC pool names.'),
     cfg.StrOpt('emc_nas_root_dir',
                help='The root directory where shares will be located.'),
+    cfg.StrOpt('emc_nas_server_pool',
+               help='Pool to persist the meta-data of NAS server.'),
 ]
 
 CONF = cfg.CONF
@@ -61,6 +62,7 @@ CONF.register_opts(EMC_NAS_OPTS)
 
 class EMCShareDriver(driver.ShareDriver):
     """EMC specific NAS driver. Allows for NFS and CIFS NAS storage usage."""
+
     def __init__(self, *args, **kwargs):
         self.configuration = kwargs.get('configuration', None)
         if self.configuration:

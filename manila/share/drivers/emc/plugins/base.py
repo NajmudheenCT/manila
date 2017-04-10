@@ -23,8 +23,7 @@ import six
 class StorageConnection(object):
     """Subclasses should implement storage backend specific functionality."""
 
-    def __init__(self, logger):
-        self.logger = logger
+    def __init__(self, *args, **kwargs):
         # NOTE(vponomaryov): redefine 'driver_handles_share_servers' within
         #                    plugin.
         self.driver_handles_share_servers = None
@@ -60,6 +59,11 @@ class StorageConnection(object):
     @abc.abstractmethod
     def deny_access(self, context, share, access, share_server):
         """Deny access to the share."""
+
+    def update_access(self, context, share, access_rules, add_rules,
+                      delete_rules, share_server=None):
+        """Update access rules for given share."""
+        raise NotImplementedError()
 
     def raise_connect_error(self):
         """Check for setup error."""

@@ -25,8 +25,8 @@ from six.moves.urllib import request as url_request  # pylint: disable=E0611
 
 from manila import exception
 from manila.i18n import _
-from manila.i18n import _LE
 from manila.share.drivers.emc.plugins.vnx import constants
+from manila.share.drivers.emc.plugins.vnx import utils as vnx_utils
 from manila import utils
 
 LOG = log.getLogger(__name__)
@@ -40,9 +40,13 @@ class XMLAPIConnector(object):
         self.password = configuration.emc_nas_password
         self.debug = debug
         self.auth_url = 'https://' + self.storage_ip + '/Login'
-        self._url = ('https://' + self.storage_ip
-                     + '/servlets/CelerraManagementServices')
-        https_handler = url_request.HTTPSHandler()
+        self._url = 'https://{}/servlets/CelerraManagementServices'.format(
+            self.storage_ip)
+        context = vnx_utils.create_ssl_context(configuration)
+        if context:
+            https_handler = url_request.HTTPSHandler(context=context)
+        else:
+            https_handler = url_request.HTTPSHandler()
         cookie_handler = url_request.HTTPCookieProcessor(
             http_cookiejar.CookieJar())
         self.url_opener = url_request.build_opener(https_handler,
@@ -152,12 +156,10 @@ class SSHConnector(object):
                 self.log_request(command, out, err)
 
                 return out, err
-            except processutils.ProcessExecutionError as e:
+            except processutils.ProcessExecutionError:
                 with excutils.save_and_reraise_exception():
-                    msg = (_LE('Error running SSH command: %(cmd)s. '
-                               'Error: %(excmsg)s.'),
-                           {'cmd': command, 'excmsg': six.text_type(e)})
-                    LOG.error(msg)
+                    LOG.exception('Error running SSH command: %(cmd)s.',
+                                  {'cmd': command})
 
     def log_request(self, cmd, out, err):
         if not self.debug:

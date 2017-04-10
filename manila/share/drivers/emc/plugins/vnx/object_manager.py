@@ -24,7 +24,7 @@ import six
 
 from manila.common import constants as const
 from manila import exception
-from manila.i18n import _, _LI, _LW
+from manila.i18n import _
 from manila.share.drivers.emc.plugins.vnx import connector
 from manila.share.drivers.emc.plugins.vnx import constants
 from manila.share.drivers.emc.plugins.vnx import utils as vnx_utils
@@ -89,8 +89,8 @@ class StorageObject(object):
                                        constants.STATUS_INFO):
             response['maxSeverity'] = constants.STATUS_OK
 
-            LOG.warning(_LW("Translated status from %(old)s to %(new)s. "
-                            "Message: %(info)s."),
+            LOG.warning("Translated status from %(old)s to %(new)s. "
+                        "Message: %(info)s.",
                         {'old': old_Severity,
                          'new': response['maxSeverity'],
                          'info': response})
@@ -252,8 +252,8 @@ class FileSystem(StorageObject):
             raise exception.EMCVnxInvalidMoverID(id=mover_id)
         elif self._response_validation(
                 response, constants.MSG_FILESYSTEM_EXIST):
-            LOG.warning(_LW("File system %s already exists. "
-                            "Skip the creation."), name)
+            LOG.warning("File system %s already exists. "
+                        "Skip the creation.", name)
             return
         elif constants.STATUS_OK != response['maxSeverity']:
             message = (_("Failed to create file system %(name)s. "
@@ -306,7 +306,7 @@ class FileSystem(StorageObject):
     def delete(self, name):
         status, out = self.get(name)
         if constants.STATUS_NOT_FOUND == status:
-            LOG.warning(_LW("File system %s not found. Skip the deletion."),
+            LOG.warning("File system %s not found. Skip the deletion.",
                         name)
             return
         elif constants.STATUS_OK != status:
@@ -439,13 +439,11 @@ class FileSystem(StorageObject):
 
         try:
             self._execute_cmd(copy_ckpt_cmd, check_exit_code=True)
-        except processutils.ProcessExecutionError as expt:
-            message = (_("Failed to copy content from snapshot %(snap)s to "
-                         "file system %(filesystem)s. Reason: %(err)s.") %
-                       {'snap': snap_name,
-                        'filesystem': name,
-                        'err': six.text_type(expt)})
-            LOG.error(message)
+        except processutils.ProcessExecutionError:
+            LOG.exception("Failed to copy content from snapshot %(snap)s "
+                          "to file system %(filesystem)s.",
+                          {'snap': snap_name,
+                           'filesystem': name})
 
         # When an error happens during nas_copy, we need to continue
         # deleting the checkpoint of the target file system if it exists.
@@ -577,8 +575,8 @@ class MountPoint(StorageObject):
             self.xml_retry = True
             raise exception.EMCVnxInvalidMoverID(id=mover_id)
         elif self._is_mount_point_already_existent(response):
-            LOG.warning(_LW("Mount Point %(mount)s already exists. "
-                            "Skip the creation."), {'mount': mount_path})
+            LOG.warning("Mount Point %(mount)s already exists. "
+                        "Skip the creation.", {'mount': mount_path})
             return
         elif constants.STATUS_OK != response['maxSeverity']:
             message = (_('Failed to create Mount Point %(mount)s for '
@@ -643,8 +641,8 @@ class MountPoint(StorageObject):
             self.xml_retry = True
             raise exception.EMCVnxInvalidMoverID(id=mover_id)
         elif self._is_mount_point_nonexistent(response):
-            LOG.warning(_LW('Mount point %(mount)s on mover %(mover_name)s '
-                            'not found.'),
+            LOG.warning('Mount point %(mount)s on mover %(mover_name)s '
+                        'not found.',
                         {'mount': mount_path, 'mover_name': mover_name})
 
             return
@@ -818,8 +816,8 @@ class Mover(StorageObject):
         lines = out.strip().split('\n')
         for line in lines:
             if line.strip().split() == header:
-                LOG.info(_LI('Found the header of the command '
-                             '/nas/bin/nas_cel -interconnect -l.'))
+                LOG.info('Found the header of the command '
+                         '/nas/bin/nas_cel -interconnect -l.')
             else:
                 interconn = line.strip().split()
                 if interconn[2] == source and interconn[4] == destination:
@@ -875,7 +873,7 @@ class VDM(StorageObject):
             self.xml_retry = True
             raise exception.EMCVnxInvalidMoverID(id=mover_id)
         elif self._response_validation(response, constants.MSG_VDM_EXIST):
-            LOG.warning(_LW("VDM %(name)s already exists. Skip the creation."),
+            LOG.warning("VDM %(name)s already exists. Skip the creation.",
                         {'name': name})
         elif constants.STATUS_OK != response['maxSeverity']:
             message = (_("Failed to create VDM %(name)s on mover "
@@ -919,7 +917,7 @@ class VDM(StorageObject):
     def delete(self, name):
         status, out = self.get(name)
         if constants.STATUS_NOT_FOUND == status:
-            LOG.warning(_LW("VDM %s not found. Skip the deletion."),
+            LOG.warning("VDM %s not found. Skip the deletion.",
                         name)
             return
         elif constants.STATUS_OK != status:
@@ -1054,8 +1052,8 @@ class Snapshot(StorageObject):
         response = self._send_request(request)
 
         if self._response_validation(response, constants.MSG_SNAP_EXIST):
-            LOG.warning(_LW("Snapshot %(name)s already exists. "
-                            "Skip the creation."),
+            LOG.warning("Snapshot %(name)s already exists. "
+                        "Skip the creation.",
                         {'name': name})
         elif constants.STATUS_OK != response['maxSeverity']:
             message = (_("Failed to create snapshot %(name)s on "
@@ -1099,7 +1097,7 @@ class Snapshot(StorageObject):
     def delete(self, name):
         status, out = self.get(name)
         if constants.STATUS_NOT_FOUND == status:
-            LOG.warning(_LW("Snapshot %s not found. Skip the deletion."),
+            LOG.warning("Snapshot %s not found. Skip the deletion.",
                         name)
             return
         elif constants.STATUS_OK != status:
@@ -1183,13 +1181,13 @@ class MoverInterface(StorageObject):
             raise exception.EMCVnxInvalidMoverID(id=mover_id)
         elif self._response_validation(
                 response, constants.MSG_INTERFACE_NAME_EXIST):
-            LOG.warning(_LW("Mover interface name %s already exists. "
-                            "Skip the creation."), name)
+            LOG.warning("Mover interface name %s already exists. "
+                        "Skip the creation.", name)
             return
         elif self._response_validation(
                 response, constants.MSG_INTERFACE_EXIST):
-            LOG.warning(_LW("Mover interface IP %s already exists. "
-                            "Skip the creation."), ip_addr)
+            LOG.warning("Mover interface IP %s already exists. "
+                        "Skip the creation.", ip_addr)
             return
         elif self._response_validation(
                 response, constants.MSG_INTERFACE_INVALID_VLAN_ID):
@@ -1249,8 +1247,8 @@ class MoverInterface(StorageObject):
             raise exception.EMCVnxInvalidMoverID(id=mover_id)
         elif self._response_validation(
                 response, constants.MSG_INTERFACE_NON_EXISTENT):
-            LOG.warning(_LW("Mover interface %s not found. "
-                            "Skip the deletion."), ip_addr)
+            LOG.warning("Mover interface %s not found. "
+                        "Skip the deletion.", ip_addr)
             return
         elif constants.STATUS_OK != response['maxSeverity']:
             message = (_("Failed to delete mover interface %(ip)s on mover "
@@ -1319,8 +1317,8 @@ class DNSDomain(StorageObject):
             self.xml_retry = True
             raise exception.EMCVnxInvalidMoverID(id=mover_id)
         elif constants.STATUS_OK != response['maxSeverity']:
-            LOG.warning(_LW("Failed to delete DNS domain %(name)s. "
-                            "Reason: %(err)s."),
+            LOG.warning("Failed to delete DNS domain %(name)s. "
+                        "Reason: %(err)s.",
                         {'name': name, 'err': response['problems']})
 
 
@@ -1511,13 +1509,13 @@ class CIFSServer(StorageObject):
             status, out = self.get(
                 computer_name.lower(), mover_name, is_vdm, self.xml_retry)
             if constants.STATUS_NOT_FOUND == status:
-                LOG.warning(_LW("CIFS server %(name)s on mover %(mover_name)s "
-                                "not found. Skip the deletion."),
+                LOG.warning("CIFS server %(name)s on mover %(mover_name)s "
+                            "not found. Skip the deletion.",
                             {'name': computer_name, 'mover_name': mover_name})
                 return
         except exception.EMCVnxXMLAPIError:
-            LOG.warning(_LW("CIFS server %(name)s on mover %(mover_name)s "
-                            "not found. Skip the deletion."),
+            LOG.warning("CIFS server %(name)s on mover %(mover_name)s "
+                        "not found. Skip the deletion.",
                         {'name': computer_name, 'mover_name': mover_name})
             return
 
@@ -1609,7 +1607,7 @@ class CIFSShare(StorageObject):
     def delete(self, name, mover_name, is_vdm=True):
         status, out = self.get(name)
         if constants.STATUS_NOT_FOUND == status:
-            LOG.warning(_LW("CIFS share %s not found. Skip the deletion."),
+            LOG.warning("CIFS share %s not found. Skip the deletion.",
                         name)
             return
         elif constants.STATUS_OK != status:
@@ -1687,8 +1685,8 @@ class CIFSShare(StorageObject):
             dup_msg = re.compile(r'ACE for %(domain)s\\%(user)s unchanged' %
                                  {'domain': domain, 'user': user_name}, re.I)
             if re.search(dup_msg, expt.stdout):
-                LOG.warning(_LW("Duplicate access control entry, "
-                                "skipping allow..."))
+                LOG.warning("Duplicate access control entry, "
+                            "skipping allow...")
             else:
                 message = (_('Failed to allow the access %(access)s to '
                              'CIFS share %(name)s. Reason: %(err)s.') %
@@ -1719,16 +1717,57 @@ class CIFSShare(StorageObject):
                 % {'domain': domain, 'user': user_name}, re.I)
 
             if re.search(not_found_msg, expt.stdout):
-                LOG.warning(_LW("No access control entry found, "
-                                "skipping deny..."))
+                LOG.warning("No access control entry found, "
+                            "skipping deny...")
             elif re.search(user_err_msg, expt.stdout):
-                LOG.warning(_LW("User not found on domain, skipping deny..."))
+                LOG.warning("User not found on domain, skipping deny...")
             else:
                 message = (_('Failed to deny the access %(access)s to '
                              'CIFS share %(name)s. Reason: %(err)s.') %
                            {'access': access, 'name': share_name, 'err': expt})
                 LOG.error(message)
                 raise exception.EMCVnxXMLAPIError(err=message)
+
+    def get_share_access(self, mover_name, share_name):
+        get_str = 'sharesd %s dump' % share_name
+        get_access = [
+            'env', 'NAS_DB=/nas', '/nas/bin/.server_config', mover_name,
+            '-v', "%s" % get_str,
+        ]
+
+        try:
+            out, err = self._execute_cmd(get_access, check_exit_code=True)
+        except processutils.ProcessExecutionError:
+            msg = _('Failed to get access list of CIFS share %s.') % share_name
+            LOG.exception(msg)
+            raise exception.EMCVnxXMLAPIError(err=msg)
+
+        ret = {}
+        name_pattern = re.compile(r"Unix user '(.+?)'")
+        access_pattern = re.compile(r"ALLOWED:(.+?):")
+
+        name = None
+        for line in out.splitlines():
+            if name is None:
+                names = name_pattern.findall(line)
+                if names:
+                    name = names[0].lower()
+            else:
+                accesses = access_pattern.findall(line)
+                if accesses:
+                    ret[name] = accesses[0].lower()
+                    name = None
+        return ret
+
+    def clear_share_access(self, mover_name, share_name, domain,
+                           white_list_users):
+        existing_users = self.get_share_access(mover_name, share_name)
+        white_list_users_set = set(user.lower() for user in white_list_users)
+        users_to_remove = set(existing_users.keys()) - white_list_users_set
+        for user in users_to_remove:
+            self.deny_share_access(mover_name, share_name, user, domain,
+                                   existing_users[user])
+        return users_to_remove
 
 
 @vnx_utils.decorate_all_methods(vnx_utils.log_enter_exit,
@@ -1760,7 +1799,7 @@ class NFSShare(StorageObject):
 
         status, out = self.get(name, mover_name)
         if constants.STATUS_NOT_FOUND == status:
-            LOG.warning(_LW("NFS share %s not found. Skip the deletion."),
+            LOG.warning("NFS share %s not found. Skip the deletion.",
                         path)
             return
 
@@ -1811,7 +1850,7 @@ class NFSShare(StorageObject):
             dup_msg = (r'%(mover_name)s : No such file or directory' %
                        {'mover_name': mover_name})
             if re.search(dup_msg, expt.stdout):
-                LOG.warning(_LW("NFS share %s not found."), name)
+                LOG.warning("NFS share %s not found.", name)
                 return constants.STATUS_NOT_FOUND, None
             else:
                 message = (_('Failed to list NFS share %(name)s on '
@@ -1948,8 +1987,44 @@ class NFSShare(StorageObject):
 
         do_deny_access(share_name, host_ip, mover_name)
 
+    def clear_share_access(self, share_name, mover_name, white_list_hosts):
+        @utils.synchronized('emc-shareaccess-' + share_name)
+        def do_clear_access(share_name, mover_name, white_list_hosts):
+            def hosts_to_remove(orig_list):
+                if white_list_hosts is None:
+                    ret = set()
+                else:
+                    ret = set(white_list_hosts).intersection(set(orig_list))
+                return ret
+
+            status, share = self.get(share_name, mover_name)
+            if constants.STATUS_OK != status:
+                message = (_('Query nfs share %(path)s failed. '
+                             'Reason %(err)s.') %
+                           {'path': share_name, 'err': status})
+                raise exception.EMCVnxXMLAPIError(err=message)
+
+            self._set_share_access('/' + share_name,
+                                   mover_name,
+                                   hosts_to_remove(share['RwHosts']),
+                                   hosts_to_remove(share['RoHosts']),
+                                   hosts_to_remove(share['RootHosts']),
+                                   hosts_to_remove(share['AccessHosts']))
+
+            # Update self.nfs_share_map
+            self.get(share_name, mover_name, force=True,
+                     check_exit_code=True)
+
+        do_clear_access(share_name, mover_name, white_list_hosts)
+
     def _set_share_access(self, path, mover_name, rw_hosts, ro_hosts,
                           root_hosts, access_hosts):
+
+        if access_hosts is None:
+            access_hosts = set()
+
+        if '-0.0.0.0/0.0.0.0' not in access_hosts:
+            access_hosts.add('-0.0.0.0/0.0.0.0')
 
         access_str = ('access=%(access)s'
                       % {'access': ':'.join(access_hosts)})
@@ -1959,6 +2034,7 @@ class NFSShare(StorageObject):
             access_str += ',rw=%(rw)s' % {'rw': ':'.join(rw_hosts)}
         if ro_hosts:
             access_str += ',ro=%(ro)s' % {'ro': ':'.join(ro_hosts)}
+
         set_nfs_share_access_cmd = [
             'env', 'NAS_DB=/nas', '/nas/bin/server_export', mover_name,
             '-ignore',

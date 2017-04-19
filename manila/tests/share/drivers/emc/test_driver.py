@@ -24,8 +24,8 @@ from manila import test
 
 
 class FakeConnection(base.StorageConnection):
-    def __init__(self, logger):
-        self.logger = logger
+    def __init__(self, *args, **kwargs):
+        pass
 
     @property
     def driver_handles_share_servers(self):
@@ -115,7 +115,7 @@ class EMCShareFrameworkTestCase(test.TestCase):
         self.driver._update_share_stats()
         data["share_backend_name"] = FAKE_BACKEND
         data["driver_handles_share_servers"] = True
-        data["vendor_name"] = 'EMC'
+        data["vendor_name"] = 'Dell EMC'
         data["driver_version"] = '1.0'
         data["storage_protocol"] = 'NFS_CIFS'
         data['total_capacity_gb'] = 'unknown'
@@ -124,9 +124,15 @@ class EMCShareFrameworkTestCase(test.TestCase):
         data['qos'] = False
         data['pools'] = None
         data['snapshot_support'] = True
+        data['create_share_from_snapshot_support'] = True
+        data['revert_to_snapshot_support'] = False
+        data['share_group_snapshot_support'] = True
+        data['mount_snapshot_support'] = False
         data['replication_domain'] = None
         data['filter_function'] = None
         data['goodness_function'] = None
+        data['snapshot_support'] = True
+        data['create_share_from_snapshot_support'] = True
         self.assertEqual(data, self.driver._stats)
 
     def _fake_safe_get(self, value):

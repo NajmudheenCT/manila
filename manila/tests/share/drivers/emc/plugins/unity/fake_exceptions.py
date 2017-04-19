@@ -64,3 +64,23 @@ class UnityNfsAlreadyEnabledError(UnityException):
 
 class UnityHostNotFoundException(UnityException):
     pass
+
+
+class UnityNothingToModifyError(UnityException):
+    pass
+
+
+class UnityTenantNameInUseError(UnityException):
+    pass
+
+
+class UnityVLANUsedByOtherTenantError(UnityException):
+    pass
+
+
+class SystemAPINotSupported(UnityException):
+    pass
+
+
+class UnityVLANAlreadyHasInterfaceError(UnityException):
+    pass

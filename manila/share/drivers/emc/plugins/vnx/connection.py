@@ -34,8 +34,10 @@ from manila import utils
 
 """Version history:
     2.1.0 - Initial version of Newton
+    2.1.1 - Cherry pick the fix from Pike:
+    https://review.openstack.org/#/c/477863/
 """
-VERSION = "2.1.0"
+VERSION = "2.1.1"
 
 LOG = log.getLogger(__name__)
 

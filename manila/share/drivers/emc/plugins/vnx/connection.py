@@ -32,6 +32,9 @@ from manila.share.drivers.emc.plugins.vnx import utils as vnx_utils
 from manila.share import utils as share_utils
 from manila import utils
 
+"""Version history:
+    2.1.0 - Initial version of Newton
+"""
 VERSION = "2.1.0"
 
 LOG = log.getLogger(__name__)

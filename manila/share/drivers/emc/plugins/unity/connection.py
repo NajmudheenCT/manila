@@ -35,6 +35,9 @@ from manila.share.drivers.emc.plugins.vnx import utils as vnx_utils
 from manila.share import utils as share_utils
 from manila import utils
 
+"""Version history:
+    1.0.0 - Initial version of Mitaka
+"""
 VERSION = "1.0.0"
 
 LOG = log.getLogger(__name__)

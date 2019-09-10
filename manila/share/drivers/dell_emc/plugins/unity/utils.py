@@ -14,11 +14,17 @@
 #    under the License.
 """ Utility module for EMC Unity Manila Driver """
 
+from oslo_log import log
 from oslo_utils import fnmatch
 from oslo_utils import units
 
 from manila import exception
 from manila.i18n import _
+from manila.share import configuration
+from manila.share import driver
+from manila.share.drivers.dell_emc.plugins.unity import connection
+
+LOG = log.getLogger(__name__)
 
 
 def do_match(full, matcher_list):
@@ -78,3 +84,44 @@ def find_ports_by_mtu(all_ports, port_ids_conf, mtu):
 
 def gib_to_byte(size_gib):
     return size_gib * units.Gi
+
+
+def get_share_id(share):
+    # Get backend share id from path in case this is
+    # managed share, and the share['id'] is different with
+    # the value in backend
+    backend_share_id = None
+    try:
+        export_locations = share['export_locations'][0]
+        path = export_locations['path']
+        if share['share_proto'].lower() == 'nfs':
+            # 10.0.0.1:/example_share_name
+            backend_share_id = path.split(':/')[-1]
+        if share['share_proto'].lower() == 'cifs':
+            # \\10.0.0.1\example_share_name
+            backend_share_id = path.split('\\')[-1]
+    except Exception as e:
+        LOG.warning('Cannot get share name from path, make sure the path '
+                    'is right. Error details: %s', e)
+    if backend_share_id and (backend_share_id != share['id']):
+        return backend_share_id
+    else:
+        return share['id']
+
+
+def get_backend_config(conf, backend_name):
+    config_stanzas = conf.list_all_sections()
+    if backend_name not in config_stanzas:
+        msg = _("Could not find backend stanza %(backend_name)s in "
+                "configuration which is required for share replication and "
+                "migration. Available stanzas are %(stanzas)s")
+        params = {
+            "stanzas": config_stanzas,
+            "backend_name": backend_name,
+        }
+        raise exception.BadConfigurationException(reason=msg % params)
+
+    config = configuration.Configuration(driver.share_opts,
+                                         config_group=backend_name)
+    config.append_config_values(connection.UNITY_OPTS)
+    return config

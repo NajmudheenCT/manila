@@ -205,3 +205,46 @@ class EMCShareDriver(driver.ShareDriver):
                                                   share_server)
         else:
             raise NotImplementedError()
+
+    def create_replica(self, context, replica_list, new_replica,
+                       access_rules, replica_snapshots, share_server=None):
+        """Replicate the active replica to a new replica on this backend.
+
+        This call is made on the host that the new replica is being created
+        upon.
+        """
+        return self.plugin.create_replica(context, replica_list, new_replica,
+                                          access_rules, replica_snapshots,
+                                          share_server=share_server)
+
+    def delete_replica(self, context, replica_list, replica_snapshots,
+                       replica, share_server=None):
+        """Delete a replica.
+
+        This call is made on the host that hosts the replica being deleted.
+        """
+        return self.plugin.delete_replica(context, replica_list,
+                                          replica_snapshots, replica,
+                                          share_server=share_server)
+
+    def promote_replica(self, context, replica_list, replica, access_rules,
+                        share_server=None):
+        """Promote a replica to 'active' replica state.
+
+        This call is made on the host that hosts the replica being promoted.
+        """
+        return self.plugin.promote_replica(context, replica_list, replica,
+                                           access_rules,
+                                           share_server=share_server)
+
+    def update_replica_state(self, context, replica_list, replica,
+                             access_rules, replica_snapshots,
+                             share_server=None):
+        """Update the replica_state of a replica.
+
+        This call is made on the host which hosts the replica being updated.
+        """
+        return self.plugin.update_replica_state(context, replica_list, replica,
+                                                access_rules,
+                                                replica_snapshots,
+                                                share_server=None)

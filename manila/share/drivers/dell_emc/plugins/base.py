@@ -88,3 +88,37 @@ class StorageConnection(object):
     @abc.abstractmethod
     def teardown_server(self, server_details, security_services=None):
         """Teardown share server."""
+
+    def create_replica(self, context, replica_list, new_replica,
+                       access_rules, replica_snapshots, share_server=None):
+        """Replicate the active replica to a new replica on this backend.
+
+        This call is made on the host that the new replica is being created
+        upon.
+        """
+        raise NotImplementedError()
+
+    def delete_replica(self, context, replica_list, replica_snapshots,
+                       replica, share_server=None):
+        """Delete a replica.
+
+        This call is made on the host that hosts the replica being deleted.
+        """
+        raise NotImplementedError()
+
+    def promote_replica(self, context, replica_list, replica, access_rules,
+                        share_server=None):
+        """Promote a replica to 'active' replica state.
+
+        This call is made on the host that hosts the replica being promoted.
+        """
+        raise NotImplementedError()
+
+    def update_replica_state(self, context, replica_list, replica,
+                             access_rules, replica_snapshots,
+                             share_server=None):
+        """Update the replica_state of a replica.
+
+        This call is made on the host which hosts the replica being updated.
+        """
+        raise NotImplementedError()

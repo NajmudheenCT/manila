@@ -361,13 +361,50 @@ class UnityClient(object):
         return self.system.get_replication_session(
             src_resource_id=src_resource_id, dst_resource_id=dst_resource_id)
 
-    def get_share_of_replica(self, active_replica):
+    def get_shares_of_replica(self, active_replica):
+        """Gets backend shares of the replica.
+
+        :param active_replica: the active replica where to get the share name.
+        :return a tuple of (src_share, dst_share). Only one of src_share and
+            dst_share can have value for remote replication, the other is None.
+            Both of src_share and dst_share are not None for local replication
+            because these two shares are with same name.
+        """
+
+        def _is_dst(s):
+            return s.filesystem.storage_resource.is_replication_destination
+
         # replica['id'] could be different from the share name on unity after
         # fail over. Parse the share name from export path.
-        # non-active replica has no export path because it is just a dr
+        # Non-active replica has no export path because it is just a dr
         # replica, so always getting share from active replica.
         share_id = utils.get_share_id(active_replica)
-        return self.get_share(share_id, active_replica['share_proto'])
+
+        # For local replications, active and non-active replicas are different
+        # unity shares but with same name. So, getting share by name could
+        # return two shares. Need to get the right share based on the
+        # is_replication_destination field of its resource. Active replica's
+        # share has is_replication_destination=False while non-active replica's
+        # share has is_replication_destination=True.
+        shares = self.get_share(share_id, active_replica['share_proto'])
+        src_share = None
+        dst_share = None
+        try:
+            for share in shares:
+                if _is_dst(share):
+                    dst_share = share
+                else:
+                    src_share = share
+        except TypeError:
+            # shares is not iterable, which means it is a unity share instance,
+            # not a list.
+            share = shares
+            if _is_dst(share):
+                dst_share = share
+            else:
+                src_share = share
+
+        return src_share, dst_share
 
     @staticmethod
     def is_replication_unplanned_failover(rep_session):
@@ -386,6 +423,11 @@ class UnityClient(object):
             enum.FAILED_OVER_WITH_SYNC,
             enum.FAILED_OVER_WITH_SYNC_MIXED,
         ]
+
+    @staticmethod
+    def is_replication_failover(rep_session):
+        return (UnityClient.is_replication_unplanned_failover(rep_session)
+                or UnityClient.is_replication_planned_failover(rep_session))
 
     @staticmethod
     def is_replication_in_sync(rep_session):
@@ -409,123 +451,83 @@ class UnityClient(object):
             return False
         return True
 
-    @staticmethod
-    def is_replication_got_on_source_system(rep_session):
-        """Check if `rep_session` is gotten on the source system.
-
-        For a local replication, its source system and destination system are
-        the same one.
-        For a remote replication, its local_role field will be `Destination` if
-        it is gotten on the destination system.
-
-        :param rep_session: the replication session.
-        :return (is_local_rep, is_got_on_source) while is_local_rep is True if
-            rep_session is a local replication and False if rep_session is a
-            remote replication. And is_got_on_source is True if rep_session is
-            gotten on the source system of the replication. Otherwise False.
-            For local replications, is_got_on_source is always True.
-        """
-        enum = enums.ReplicationSessionReplicationRoleEnum
-        if rep_session.local_role == enum.SOURCE:
-            return False, True
-        if rep_session.local_role == enum.DESTINATION:
-            return False, False
-        return True, True
-
-    def is_in_replication(self, resource):
+    def is_in_replication(self, resource, is_source=None):
         """Checks if `resource` is participating in a replication session.
 
         The implementation is based on the fact that only one replication
         session per nas server or filesystem is supported on unity.
 
         :param resource: could be nas server or filesystem instance.
+        :param is_source: True - check if `resource` is the source of the
+            replication, False - check if `resource` is the destination of the
+            replication, None - just check if `resource` is participating in
+            any replication, no matter is the source or destination.
 
-        :return (flag, rep_session, is_src) while `flag` is True if `resource`
-            is participating in a replication session, `rep_session` is the
-            replication session instance, and `is_src` is True if `resource`
-            is the replication source.
+        :return the replication session in which the `resource` is
+            participating.
         """
 
-        rep_sessions = self.get_replication_session()
+        if is_source or is_source is None:
+            rep_sessions = self.get_replication_session(
+                src_resource_id=resource.get_id()
+            )
+            if len(rep_sessions):
+                return rep_sessions[0]
+        if not is_source:
+            rep_sessions = self.get_replication_session(
+                dst_resource_id=resource.get_id()
+            )
+            if len(rep_sessions):
+                return rep_sessions[0]
+        return None
 
-        for s in rep_sessions:
-            # rep_sessions contains all the replication sessions which are from
-            # the system of this client and targeting to the system.
-            is_local, is_on_src = self.is_replication_got_on_source_system(s)
-
-            # Only one replication session per nas server or filesystem is
-            # supported including source and destination. Once we find, return.
-            if is_local:
-                if resource.get_id() in s.src_resource_id:
-                    return True, s, True
-                if resource.get_id() in s.dst_resource_id:
-                    return True, s, False
-            else:
-                if is_on_src:
-                    if resource.get_id() in s.src_resource_id:
-                        return True, s, True
-                else:
-                    if resource.get_id() in s.dst_resource_id:
-                        return True, s, False
-
-        return False, None, False
-
-    def enable_nas_server_replication(self, src_nas_server,
-                                      dst_pool_id,
-                                      remote_system=None,
-                                      max_out_of_sync_minutes=60):
-        """Create or update the replication with `src_nas_server` as source.
+    def enable_replication(self, resource, dst_pool_id, remote_system=None,
+                           max_out_of_sync_minutes=60):
+        """Create or update the replication with `resource` as source.
 
         It will validate if there is already replication session where the
-        `src_nas_server` is participating. If yes, `max_time_out_of_sync` of
+        `resource` is participating. If yes, `max_time_out_of_sync` of
         the existing replication session will be updated to the value of
-        `max_out_of_sync_minutes`. Otherwise, a new nas server will be
+        `max_out_of_sync_minutes`. Otherwise, a new resource will be
         provisioned on the `dst_pool_id` of the `remote_system`.
 
-        :param src_nas_server: the nas server as the source of the replication.
-        :param dst_pool_id: the pool where the destination nas server will be
+        :param resource: the resource as the source of the replication, could
+            be a nas server or a filesystem.
+        :param dst_pool_id: the pool where the destination resource will be
             provisioned.
         :param remote_system: the remote system of the replication.
         :param max_out_of_sync_minutes: new max minutes out of sync.
-        :return: None
+        :return: the created replication session.
         """
 
-        is_in_rep, rep_session, is_src = self.is_in_replication(src_nas_server)
-        if is_in_rep:
-            # Only one replication session per nas server is supported.
-            LOG.info('nas server: %(nas)s already participates in a '
+        rep_session = self.is_in_replication(resource, is_source=True)
+        if rep_session:
+            # Only one replication session per resource is supported.
+            LOG.info('resource: %(nas)s already participates in a '
                      'replication: %(rep)s',
-                     nas=src_nas_server.name,
+                     nas=resource.name,
                      rep=rep_session)
 
-            # Check #1: nas server is the source of the existing replication.
-            if not is_src:
-                raise exception.EMCUnityError(
-                    err='nas server: {nas} is not the source of replication: '
-                        '{rep}'.format(nas=src_nas_server.name,
-                                       rep=rep_session)
-                )
-
-            # Check #2: the existing replication's destination system is as
+            # Check if the existing replication's destination system is as
             # expected.
             remote_system_name = (remote_system.name if remote_system
                                   else self.get_serial_number())
             if rep_session.remote_system.name != remote_system_name:
                 raise exception.EMCUnityError(
-                    err='the replication {rep} of nas server: {nas} not '
+                    err='the replication {rep} of resource: {res} not '
                         'target to the expected remote system: '
-                        '{remote}'.format(nas=src_nas_server.name,
+                        '{remote}'.format(res=resource.name,
                                           rep=rep_session,
                                           remote=remote_system_name)
                 )
 
-            # The replication of nas server already exists and valid.
+            # The replication of resource server already exists and valid.
             if rep_session.max_time_out_of_sync != max_out_of_sync_minutes:
                 rep_session.modify(
                     max_time_out_of_sync=max_out_of_sync_minutes)
         else:
             rep_session = (
-                src_nas_server.replicate_with_dst_resource_provisioning(
+                resource.replicate_with_dst_resource_provisioning(
                     max_out_of_sync_minutes,
                     dst_pool_id,
                     remote_system=remote_system,
@@ -533,147 +535,71 @@ class UnityClient(object):
             )
         return rep_session
 
-    def disable_nas_server_replication(self, nas_server, ensure_source=True):
-        """Delete the replication of `nas_server`.
+    def disable_replication(self, resource, from_source=True):
+        """Delete the replication of `resource`.
 
         The implementation is based on the fact that only one replication
-        session per nas server.
+        session per resource.
 
-        :param nas_server: the replication of this nas server will be deleted.
-        :param ensure_source: make sure the replication session is deleted
-            on the source side.
+        :param resource: the replication of this resource will be deleted,
+            could be a nas server or filesystem.
+        :param from_source: True - delete the replication from the source
+            resource, False - delete from the destination resource.
         :return None
-        :raise DeleteFromReplicaNotSrcError: this error is raised if
-            ensure_source is True but the deletion is on the destination side.
-        :return: None
         """
         # Suppose the existing replication is valid. No need to check, ie. if
         # the nas server is the source of the replication.
-        is_in_rep, rep_session, is_src = self.is_in_replication(nas_server)
-        if is_in_rep:
-            if ensure_source and not is_src:
-                raise DeleteFromReplicaNotSrcError(
-                    'cannot delete replication of nas server: {} from '
-                    'destination system'.format(nas_server.name))
+        rep_session = self.is_in_replication(resource, is_source=from_source)
+        if rep_session:
             try:
                 rep_session.delete()
             except storops_ex.UnityFileResourceReplicationInUseError:
                 # This exception raised when deleting nas server replication
                 # and filesystem replication still exists.
-                LOG.info('try to delete replication of nas server: %s but '
+                LOG.info('try to delete replication of resource: %s but '
                          'failed because there is still filesystem '
                          'replication on the same nas server. Skip the '
-                         'deletion of nas server replication this time',
-                         nas_server.name)
+                         'deletion of resource replication this time',
+                         resource.name)
         else:
-            LOG.info('share nas server: %s is not in a replication.'
+            LOG.info('resource: %s is not in a replication.'
                      'Do nothing for replication deletion',
-                     nas_server.name)
+                     resource.name)
 
-    def failover_nas_server_replication(self, nas_server):
-        """Fail over the replication with `nas_server` as destination.
+    def failover_replication(self, resource):
+        """Fail over the replication of `resource`.
 
-        The unity action could be `fail over` or `fail back` based on which
-        system the action is executed. For example, execute `fail over` on
-        destination system to fail over the replication from source to
-        destination. And execute `fail back` on source system to fail back the
-        replication from destination to source.
+        This call must be made on the destination system of the replication
+        session.
 
-        All the filesystems on `nas_server` will be failed over together
-        with `nas_server`.
-
-        :param nas_server: the destination nas server of the replication.
+        :param resource: the resource whose replication session will be failed
+            over.
         :return: None
         """
-        is_in_rep, rep_session, is_src = self.is_in_replication(nas_server)
-        if not is_in_rep:
-            LOG.info('share nas server: %s is not in a replication.'
-                     'Do nothing for replication failover/failback',
-                     nas_server.name)
+        rep_session = self.is_in_replication(resource, is_source=False)
+        if not rep_session:
+            LOG.info('resource: %s is not in a replication.'
+                     'Do nothing for replication failover',
+                     resource.name)
             return
-        if is_src:
-            LOG.info('failing back share nas server: %s', nas_server.name)
-            rep_session.failback()
-        else:
-            LOG.info('failing over share nas server: %s', nas_server.name)
-            rep_session.failover()
+        LOG.info('failing over the replication of resource: %s', resource.name)
+        rep_session.failover()
 
-    def enable_filesystem_replication(self, src_fs,
-                                      dst_pool_id,
-                                      remote_system=None,
-                                      max_out_of_sync_minutes=60):
-        """Create or update the replication with `src_fs` as source.
+    def failback_replication(self, resource):
+        """Fail back the replication of `resource`.
 
-        It will validate if there is already replication session where the
-        `src_fs` is participating. If yes, `max_time_out_of_sync` of
-        the existing replication session will be updated to the value of
-        `max_out_of_sync_minutes`. Otherwise, a new filesystem will be
-        provisioned on the `dst_pool_id` of the `remote_system`.
+        This call must be made on the source system of the replication
+        session.
 
-        :param src_fs: the filesystem as the source of the replication.
-        :param dst_pool_id: the pool where the destination nas server will be
-        provisioned.
-        :param remote_system: the remote system of the replication.
-        :param max_out_of_sync_minutes: new max minutes out of sync.
+        :param resource: the resource whose replication session will be failed
+            back.
         :return: None
         """
-        is_in_rep, rep_session, _ = self.is_in_replication(src_fs)
-        if is_in_rep:
-            # Only one replication session per filesystem is supported.
-            LOG.info('filesystem: %(nas)s already participates in a '
-                     'replication: %(rep)s',
-                     nas=src_fs.name,
-                     rep=rep_session)
-
-            # No need to do check on the filesystem replication because the
-            # filesystem replication goes with the nas server's. We already
-            # validate the nas server replication.
-
-            # The replication of filesystem already exists and valid.
-            if rep_session.max_time_out_of_sync != max_out_of_sync_minutes:
-                rep_session.modify(
-                    max_time_out_of_sync=max_out_of_sync_minutes)
-
-        else:
-            rep_session = src_fs.replicate_with_dst_resource_provisioning(
-                max_out_of_sync_minutes,
-                dst_pool_id,
-                remote_system=remote_system,
-            )
-        return rep_session
-
-    def disable_filesystem_replication(self, fs, ensure_source=True):
-        """Delete the replication of `fs`.
-
-        The implementation is based on the fact that only one replication
-        session per filesystem.
-
-        :param fs: the replication of this filesystem will be deleted.
-        :param ensure_source: make sure the replication session is deleted
-            on the source side.
-        :return None
-        :raise DeleteFromReplicaNotSrcError: this error is raised if
-            ensure_source is True but the deletion is on the destination side.
-        """
-        is_in_rep, rep_session, is_src = self.is_in_replication(fs)
-        if is_in_rep:
-            if ensure_source and not is_src:
-                raise DeleteFromReplicaNotSrcError(
-                    'cannot delete replication of fs: {} from destination '
-                    'system'.format(fs.name))
-            rep_session.delete()
-        else:
-            LOG.info('share filesystem: %s is not in a replication.'
-                     'Do nothing for replication deletion', fs.name)
-
-
-class DeleteFromReplicaError(Exception):
-    pass
-
-
-class DeleteFromReplicaDownError(DeleteFromReplicaError):
-    pass
-
-
-class DeleteFromReplicaNotSrcError(DeleteFromReplicaError):
-    pass
+        rep_session = self.is_in_replication(resource, is_source=True)
+        if not rep_session:
+            LOG.info('resource: %s is not in a replication.'
+                     'Do nothing for replication failback',
+                     resource.name)
+            return
+        LOG.info('failing back the replication of resource: %s', resource.name)
+        rep_session.failback()

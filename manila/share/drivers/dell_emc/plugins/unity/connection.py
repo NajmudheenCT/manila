@@ -758,24 +758,51 @@ class UnityStorageConnection(driver.StorageConnection):
 
         active_replica = share_utils.get_active_replica(replica_list)
         src_client = self._setup_replica_client(active_replica)
-        src_share = src_client.get_share_of_replica(active_replica)
+        src_share, dst_share = src_client.get_shares_of_replica(active_replica)
+        # src_share and dst_share cannot be all None
+        # src_share and dst_share could be one of below cases:
+        # 1. src_share is None and dst_share is not, which means the active
+        # replica is already a destination in a REMOTE replication.
+        if not src_share:
+            raise exception.EMCUnityError(
+                err='active replica share: {} is already the destination of a '
+                    'replication'.format(dst_share.get_id()))
+        # 2. src_share is not None and dst_share is None, which means the
+        # active replica is a) already a source in a REMOTE replication or
+        # b) not in any replication.
+        # 3. src_share is not None and dst_share is not None, which means the
+        # active replica is already a source in a LOCAL replication.
+
+        # For case #2 and #3, only check whether the active replica is
+        # participating in a replication or not.
+        rep_session = src_client.is_in_replication(src_share.filesystem,
+                                                   is_source=True)
+        if rep_session:
+            raise exception.EMCUnityError(
+                err='active replica share: {share} is already the source '
+                    'of replication: {rep}'.format(share=src_share.get_id(),
+                                                   rep=rep_session.name))
 
         dst_client = self.client
         dst_pool_name = share_utils.extract_host(new_replica['host'],
                                                  level='pool')
         dst_pool_id = dst_client.get_pool(name=dst_pool_name).get_id()
+        src_serial_number = src_client.get_serial_number()
         dst_serial_number = dst_client.get_serial_number()
         # dst_system could be local system which is same as src system.
         # then local replication will be created in such case.
-        dst_system = src_client.get_remote_system(name=dst_serial_number)
+        dst_system = (None if src_serial_number == dst_serial_number else
+                      src_client.get_remote_system(name=dst_serial_number))
 
-        src_client.enable_nas_server_replication(
+        # Enable replication on nas server.
+        src_client.enable_replication(
             src_share.filesystem.nas_server, dst_pool_id,
             remote_system=dst_system,
             max_out_of_sync_minutes=self.replication_rpo,
         )
 
-        fs_rep = src_client.enable_filesystem_replication(
+        # Enable replication on filesystem.
+        fs_rep = src_client.enable_replication(
             src_share.filesystem, dst_pool_id,
             remote_system=dst_system,
             max_out_of_sync_minutes=self.replication_rpo,
@@ -790,17 +817,47 @@ class UnityStorageConnection(driver.StorageConnection):
         }
         return model_update
 
-    def _delete_rep_from(self, replica, active_replica, ensure_source=True):
+    def _delete_rep_from(self, replica, active_replica, force=False):
 
         rep_client = self._setup_replica_client(replica)
         try:
-            share = rep_client.get_share_of_replica(active_replica)
-            rep_client.disable_filesystem_replication(
-                share.filesystem, ensure_source=ensure_source)
-            rep_client.disable_nas_server_replication(
-                share.filesystem.nas_server, ensure_source=ensure_source)
+            src_share, dst_share = rep_client.get_shares_of_replica(
+                active_replica)
+
+            # 1. Local replication exists if src_share and dst_share are not
+            # None.
+            # 2. Remote replication from src_share exists if src_share is not
+            # None and dst_share is None.
+            # 3. Remote replication to dst_share exists if src_share is None
+            # and dst_share is not None.
+            # Try to delete the replication session from source side if
+            # possible.
+
+            if src_share:
+                # Case #1 and #2.
+                rep_client.disable_replication(src_share.filesystem,
+                                               from_source=True)
+                rep_client.disable_replication(src_share.filesystem.nas_server,
+                                               from_source=True)
+                return
+
+            # Case #3.
+            # Only delete replication session from destination side when
+            # `force` is True.
+            if force:
+                LOG.info('deleting the replication from destination share: %s',
+                         dst_share.name)
+                rep_client.disable_replication(dst_share.filesystem,
+                                               from_source=False)
+                rep_client.disable_replication(dst_share.filesystem.nas_server,
+                                               from_source=False)
+            else:
+                raise DeleteFromReplicaNotSrcError(
+                    'the system of replica: {} is the replication source '
+                    'side'.format(replica['id']))
+
         except storops_ex.StoropsConnectTimeoutError:
-            raise client.DeleteFromReplicaDownError(
+            raise DeleteFromReplicaDownError(
                 'the system of replica: {} is down'.format(replica['id']))
 
     def delete_replica(self, context, replica_list, replica_snapshots,
@@ -817,39 +874,38 @@ class UnityStorageConnection(driver.StorageConnection):
 
         try:
             self._delete_rep_from(replica, active_replica)
-        except client.DeleteFromReplicaDownError:
+        except DeleteFromReplicaDownError:
             LOG.info('the system of deleting replica: %s is down. Try to '
                      'delete the replication session on active replica system',
                      replica['id'])
             try:
                 self._delete_rep_from(active_replica, active_replica)
-            except client.DeleteFromReplicaDownError:
+            except DeleteFromReplicaDownError:
                 raise exception.EMCUnityError(
                     'both systems of deleting replica and active replica are '
                     'down')
-            except client.DeleteFromReplicaNotSrcError:
+            except DeleteFromReplicaNotSrcError:
                 LOG.info('the system of deleting replica is down but the '
                          'active replica system is not the source of '
                          'replication session. Deleting the replication '
                          'session of unreachable system from active '
                          'replica to make sure more replicas can be created')
-                self._delete_rep_from(active_replica,
-                                      active_replica,
-                                      ensure_source=False)
-        except client.DeleteFromReplicaNotSrcError:
+                self._delete_rep_from(active_replica, active_replica,
+                                      force=True)
+        except DeleteFromReplicaNotSrcError:
             LOG.info('the system of deleting replica: %s is not the source of '
                      'the replication session. Try to delete the replication '
                      'session on active replica system',
                      replica['id'])
             try:
                 self._delete_rep_from(active_replica, active_replica)
-            except client.DeleteFromReplicaDownError:
+            except DeleteFromReplicaDownError:
                 LOG.info('although the system of deleting replica is not the '
                          'source of the replication session, still delete the '
                          'replication session from it because the system of '
-                         'active replica id down')
+                         'active replica is down')
                 self._delete_rep_from(replica, active_replica,
-                                      ensure_source=False)
+                                      force=True)
             # DeleteFromReplicaNotSrcError won't raise here because the active
             # replica system is the source.
 
@@ -860,14 +916,26 @@ class UnityStorageConnection(driver.StorageConnection):
         This call is made on the host that hosts the replica being promoted.
         """
         active_replica = share_utils.get_active_replica(replica_list)
-        share = self.client.get_share_of_replica(active_replica)
+        src_share, dst_share = self.client.get_shares_of_replica(
+            active_replica)
 
-        # Fail over or back nas server replication based on current replica
-        # system is destination or source of the replication.
-        nas_server = share.filesystem.nas_server
-        self.client.failover_nas_server_replication(nas_server)
+        # 1. Local replication exists if src_share and dst_share are not
+        # None.
+        # 2. Remote replication from src_share exists if src_share is not
+        # None and dst_share is None.
+        # 3. Remote replication to dst_share exists if src_share is None
+        # and dst_share is not None.
 
-        # Filesystem replication will be failed over/back with nas server's.
+        if dst_share:
+            share = dst_share
+            nas_server = share.filesytem.nas_server
+            self.client.failover_replication(nas_server)
+        else:
+            share = src_share
+            nas_server = share.filesytem.nas_server
+            self.client.failback_replication(nas_server)
+        # No need to fail over/back filesystem replication because it will be
+        # failed over/back with nas server's.
 
         for rep in replica_list:
             if rep['id'] == replica['id']:
@@ -900,50 +968,70 @@ class UnityStorageConnection(driver.StorageConnection):
                session) if the replication session status indicates in sync.
         2. Planned/unplanned failed over replication:
             1) call `resume` on replication session in the destination side (
-               non-active replica).
+               active replica).
             2) return `out_of_sync` (it could be in sync after next poll).
         """
 
         active_replica = share_utils.get_active_replica(replica_list)
         active_client = self._setup_replica_client(active_replica)
         try:
-            share = active_client.get_share_of_replica(active_replica)
+            src_share, dst_share = active_client.get_shares_of_replica(
+                active_replica)
         except storops_ex.StoropsConnectTimeoutError:
-            LOG.info('active replica system is down')
+            LOG.info('system of active replica: %s is down',
+                     active_replica['id'])
             return const.REPLICA_STATE_OUT_OF_SYNC
 
-        nas_server = share.filesystem.nas_server
-        is_in_rep, _, is_src = active_client.is_in_replication(nas_server)
+        # 1. Local replication exists in the system of active replication if
+        # src_share and dst_share are not None.
+        # 2. Remote replication from src_share exists if src_share is not
+        # None and dst_share is None. The system of active replica is the
+        # source side of the replication session.
+        # 3. Remote replication to dst_share exists if src_share is None
+        # and dst_share is not None. The system of active replica is the
+        # destination side of the replication session. It'll be this case after
+        # planned/unplanned failover.
 
-        if not is_in_rep:
-            LOG.warning('nas server: %s of active replica is not in a '
-                        'replication', nas_server.get_id())
-            return const.STATUS_ERROR
+        if src_share:
+            # Case #1 and #2, sync the replication session in active replica
+            # system.
+            fs = src_share.filesystem
+            rep_session = active_client.is_in_replication(fs, is_source=True)
+            if not rep_session:
+                LOG.warning('filesystem: %s of active replica is not in a '
+                            'replication', fs.get_id())
+                return const.STATUS_ERROR
 
-        if is_src:
-            # Sync the filesystem replication session and the data of the share
-            # will be synced.
-            _, fs_session, _ = active_client.is_in_replication(
-                share.filesystem)
-            fs_session.sync()
-            fs_session.update()
-            return (const.REPLICA_STATE_IN_SYNC
-                    if active_client.is_replication_in_sync(fs_session)
-                    else const.REPLICA_STATE_OUT_OF_SYNC)
+            if not active_client.is_replication_failover(rep_session):
+                # Sync the filesystem replication session and the data of the
+                # share will be synced.
+                rep_session.sync()
+                rep_session.update()
+                return (const.REPLICA_STATE_IN_SYNC
+                        if active_client.is_replication_in_sync(rep_session)
+                        else const.REPLICA_STATE_OUT_OF_SYNC)
 
-        # For planned and unplanned failed over replications
-        replica_client = self._setup_replica_client(replica)
-        try:
-            share = replica_client.get_share_of_replica(active_replica)
-        except storops_ex.StoropsConnectTimeoutError:
-            LOG.info('non-active replica system is down')
-            return const.STATUS_ERROR
-
-        nas_server = share.filesystem.nas_server
-        _, nas_session, _ = replica_client.is_in_replication(nas_server)
+        # For planned and unplanned failed-over replications.
+        # dst_share cannot be None.
+        nas_server = dst_share.filesystem.nas_server
+        nas_session = active_client.is_in_replication(nas_server,
+                                                      is_source=False)
         nas_session.resume()
 
-        _, fs_session, _ = replica_client.is_in_replication(share.filesystem)
+        fs_session = active_client.is_in_replication(dst_share.filesystem,
+                                                     is_source=False)
         return (const.REPLICA_STATE_IN_SYNC
-                if replica_client.is_replication_in_sync(fs_session)
+                if active_client.is_replication_in_sync(fs_session)
                 else const.REPLICA_STATE_OUT_OF_SYNC)
+
+
+class DeleteFromReplicaError(Exception):
+    pass
+
+
+class DeleteFromReplicaDownError(DeleteFromReplicaError):
+    pass
+
+
+class DeleteFromReplicaNotSrcError(DeleteFromReplicaError):
+    pass

@@ -424,10 +424,23 @@ class UnityClient(object):
             enum.FAILED_OVER_WITH_SYNC_MIXED,
         ]
 
-    @staticmethod
-    def is_replication_failover(rep_session):
-        return (UnityClient.is_replication_unplanned_failover(rep_session)
-                or UnityClient.is_replication_planned_failover(rep_session))
+    def is_replication_failover(self, resource, is_source=None):
+        rep_session = self.is_in_replication(resource, is_source=is_source)
+        if not rep_session:
+            if is_source is None:
+                role = 'any'
+            elif is_source:
+                role = 'source'
+            else:
+                role = 'destination'
+            LOG.info('resource: %(res)s is not participating as %(role)s side '
+                     'in any replication session',
+                     {'res': resource.name, 'role': role})
+            return None, False
+
+        return (rep_session,
+                (self.is_replication_unplanned_failover(rep_session)
+                 or self.is_replication_planned_failover(rep_session)))
 
     @staticmethod
     def is_replication_in_sync(rep_session):
@@ -467,6 +480,10 @@ class UnityClient(object):
             participating.
         """
 
+        if isinstance(resource,
+                      storops.unity.resource.filesystem.UnityFileSystem):
+            resource = resource.storage_resource
+
         if is_source or is_source is None:
             rep_sessions = self.get_replication_session(
                 src_resource_id=resource.get_id()
@@ -505,8 +522,7 @@ class UnityClient(object):
             # Only one replication session per resource is supported.
             LOG.info('resource: %(nas)s already participates in a '
                      'replication: %(rep)s',
-                     nas=resource.name,
-                     rep=rep_session)
+                     {'nas': resource.name, 'rep': rep_session})
 
             # Check if the existing replication's destination system is as
             # expected.
@@ -555,11 +571,11 @@ class UnityClient(object):
                 rep_session.delete()
             except storops_ex.UnityFileResourceReplicationInUseError:
                 # This exception raised when deleting nas server replication
-                # and filesystem replication still exists.
-                LOG.info('try to delete replication of resource: %s but '
+                # and its filesystem replication still exists.
+                LOG.info('try to delete replication of nas server: %s but '
                          'failed because there is still filesystem '
                          'replication on the same nas server. Skip the '
-                         'deletion of resource replication this time',
+                         'deletion of nas server replication this time',
                          resource.name)
         else:
             LOG.info('resource: %s is not in a replication.'

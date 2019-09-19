@@ -1012,16 +1012,22 @@ class UnityStorageConnection(driver.StorageConnection):
         # No need to fail over/back filesystem replication because it will be
         # failed over/back with nas server's.
 
-        for rep in replica_list:
-            if rep['id'] == replica['id']:
-                rep['export_locations'] = self._get_export_location(
+        def _update_replica(rep):
+            updated = {
+                'id': rep['id'],
+                'replica_state': const.REPLICA_STATE_OUT_OF_SYNC,
+                'export_locations': [],
+            }
+            if updated['id'] == replica['id']:
+                updated['replica_state'] = const.REPLICA_STATE_ACTIVE
+                updated['export_locations'] = self._get_export_location(
                     nas_server.file_interface,
                     active_replica['share_proto'],
                     share.name,
                 )
-            else:
-                rep['export_locations'] = []
-        return replica_list
+            return updated
+
+        return [_update_replica(rep) for rep in replica_list]
 
     def update_replica_state(self, context, replica_list, replica,
                              access_rules, replica_snapshots,

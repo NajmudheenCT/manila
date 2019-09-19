@@ -1003,11 +1003,11 @@ class UnityStorageConnection(driver.StorageConnection):
 
         if dst_share:
             share = dst_share
-            nas_server = share.filesytem.nas_server
+            nas_server = share.filesystem.nas_server
             self.client.failover_replication(nas_server)
         else:
             share = src_share
-            nas_server = share.filesytem.nas_server
+            nas_server = share.filesystem.nas_server
             self.client.failback_replication(nas_server)
         # No need to fail over/back filesystem replication because it will be
         # failed over/back with nas server's.
@@ -1046,6 +1046,14 @@ class UnityStorageConnection(driver.StorageConnection):
                active replica).
             2) return `out_of_sync` (it could be in sync after next poll).
         """
+
+        # Replicas with error status maybe fail when creating. Don't update
+        # (sync/resume) their replication sessions due to they could be not
+        # exist.
+        if replica['status'] == const.STATUS_ERROR:
+            LOG.info('replica: %s is with error status. Set replica state to '
+                     'error', replica['id'])
+            return const.STATUS_ERROR
 
         active_replica = share_utils.get_active_replica(replica_list)
         active_client = self._setup_replica_client(active_replica)

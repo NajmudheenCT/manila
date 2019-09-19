@@ -865,9 +865,14 @@ class UnityStorageConnection(driver.StorageConnection):
             LOG.info('the system of replica is down. Detail: %s', ex)
             return True, None, None
 
-    def _delete_replica_resource(self, share):
-        # First delete share and filesystem.
-        self._delete_backend_share(share)
+    def _delete_replica_resource(self, share, is_destination=False):
+        if is_destination:
+            # Unity doesn't allow to delete the share which on the destination
+            # nas server. If that is the case, delete the filesystem directly.
+            self.client.delete_filesystem(share.filesystem)
+        else:
+            # First delete share and filesystem.
+            self._delete_backend_share(share)
 
         # Then delete nas server if it has no filesystem anymore.
         nas_server_name = share.filesystem.nas_server.name
@@ -928,10 +933,11 @@ class UnityStorageConnection(driver.StorageConnection):
                       {'rep': replica_id, 'src': dr_src_shr.get_id(),
                        'dst': dr_dst_shr.get_id()})
 
-            self._delete_rep_from(dr_client, dr_src_shr, dr_dst_shr)
-
             _, is_failover = dr_client.is_replication_failover(
                 dr_src_shr.filesystem, is_source=True)
+
+            self._delete_rep_from(dr_client, dr_src_shr, dr_dst_shr)
+
             if is_failover:
                 # After the replication session failed over, the active replica
                 # is the destination share. While the non-active replica is the
@@ -941,7 +947,7 @@ class UnityStorageConnection(driver.StorageConnection):
                           dr_src_shr.get_id())
                 self._delete_replica_resource(dr_src_shr)
             else:
-                self._delete_replica_resource(dr_dst_shr)
+                self._delete_replica_resource(dr_dst_shr, is_destination=True)
         elif dr_src_shr:
             # This is a REMOTE replication session with dr replica as the
             # source side and active replica as the destination.
@@ -970,7 +976,7 @@ class UnityStorageConnection(driver.StorageConnection):
                           'system')
                 self._delete_rep_from(active_client, act_src_shr, act_dst_shr)
 
-            self._delete_replica_resource(dr_dst_shr)
+            self._delete_replica_resource(dr_dst_shr, is_destination=True)
 
         else:
             # dr_src_shr and dr_dst_shr cannot be ALL None.

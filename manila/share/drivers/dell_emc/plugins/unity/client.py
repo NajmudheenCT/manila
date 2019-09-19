@@ -451,6 +451,8 @@ class UnityClient(object):
             enum.IDLE,
             enum.IDLE_MIXED,
             enum.OK,
+            enum.AUTO_SYNC_CONFIGURED,
+            enum.AUTO_SYNC_CONFIGURED_MIXED,
         ]:
             return False
 

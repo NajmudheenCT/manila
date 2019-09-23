@@ -599,13 +599,17 @@ class UnityClient(object):
                      'deletion of nas server replication this time',
                      utils.repr(resource))
 
-    def failover_replication(self, rep_session):
+    def failover_replication(self, rep_session, sync=None):
         """Fail over the replication.
 
         This call must be made on the destination system of the replication
         session.
 
         :param rep_session: the replication session will be failed over.
+        :param sync: True - sync the source and destination resources before
+            failing over the asynchronous replication session or keep them in
+            sync after failing over the synchronous replication session.
+            False - don't sync.
         :return: None
         """
         if not rep_session:
@@ -613,7 +617,7 @@ class UnityClient(object):
                      'Do nothing for replication failover')
             return
         LOG.info('failing over the replication session: %s', rep_session.name)
-        rep_session.failover()
+        rep_session.failover(sync=sync)
 
     def failback_replication(self, rep_session):
         """Fail back the replication.

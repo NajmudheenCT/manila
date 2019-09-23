@@ -13,6 +13,7 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 """Unity backend for the EMC Manila driver."""
+import functools
 import random
 
 from oslo_config import cfg
@@ -968,8 +969,9 @@ class UnityStorageConnection(driver.StorageConnection):
         """
         active_replica = share_utils.get_active_replica(replica_list)
         dr_client = self.client
-        is_dr_down, _, dr_share = self._is_system_down(dr_client,
-                                                       active_replica)
+        is_dr_down, dr_io_share, dr_share = self._is_system_down(
+            dr_client, active_replica)
+        # It's a LOCAL replication if dr_io_share is not None.
         if is_dr_down:
             raise exception.EMCUnityError(
                 err='cannot promote the replica: {} whose system is '
@@ -1010,7 +1012,12 @@ class UnityStorageConnection(driver.StorageConnection):
         else:
             LOG.debug('failing over the replication session of nas server: %s',
                       unity_utils.repr(nas_server))
-            _promote(dr_client, dr_client.failover_replication)
+            is_local_rep = dr_io_share is not None
+            # Always failover with sync for the local replication, which means
+            # planned failover.
+            _promote(dr_client,
+                     functools.partial(dr_client.failover_replication,
+                                       sync=is_local_rep))
 
         # No need to fail over/back filesystem replication because it will be
         # failed over/back with nas server's.
@@ -1018,7 +1025,7 @@ class UnityStorageConnection(driver.StorageConnection):
         def _update_replica(rep):
             updated = {
                 'id': rep['id'],
-                'replica_state': const.REPLICA_STATE_OUT_OF_SYNC,
+                'replica_state': rep['replica_state'],
                 'export_locations': [],
             }
             if updated['id'] == replica['id']:
@@ -1028,6 +1035,8 @@ class UnityStorageConnection(driver.StorageConnection):
                     active_replica['share_proto'],
                     dr_share.name,
                 )
+            if updated['id'] == active_replica['id']:
+                updated['replica_state'] = const.REPLICA_STATE_OUT_OF_SYNC
             return updated
 
         return [_update_replica(rep) for rep in replica_list]

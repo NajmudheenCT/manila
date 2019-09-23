@@ -125,3 +125,8 @@ def get_backend_config(conf, backend_name):
                                          config_group=backend_name)
     config.append_config_values(connection.UNITY_OPTS)
     return config
+
+
+def repr(unity_res):
+    return 'id={id}:name={name}'.format(id=unity_res.get_id(),
+                                        name=unity_res.name)

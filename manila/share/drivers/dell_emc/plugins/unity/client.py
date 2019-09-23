@@ -364,15 +364,26 @@ class UnityClient(object):
     def get_shares_of_replica(self, active_replica):
         """Gets backend shares of the replica.
 
+        There are two shares with same name for local replication sessions in
+        which case this function returns two shares, the first of them is the
+        active IO share, the second is for dr.
+
         :param active_replica: the active replica where to get the share name.
-        :return a tuple of (src_share, dst_share). Only one of src_share and
-            dst_share can have value for remote replication, the other is None.
-            Both of src_share and dst_share are not None for local replication
+        :return a tuple of (io_share, dr_share). Only one of io_share and
+            dr_share can have value for remote replication, the other is None.
+            Both of io_share and dr_share are not None for local replication
             because these two shares are with same name.
         """
 
-        def _is_dst(s):
-            return s.filesystem.storage_resource.is_replication_destination
+        def _is_io_active(s):
+            is_dst = s.filesystem.storage_resource.is_replication_destination
+            LOG.debug('share: %(shr)s, fs: %(fs)s, '
+                      'res: %(res)s, is_dst: %(is_dst)s',
+                      {'shr': utils.repr(s), 'name': s.name,
+                       'fs': s.filesystem.get_id(),
+                       'res': s.filesystem.storage_resource.get_id(),
+                       'is_dst': is_dst})
+            return not is_dst
 
         # replica['id'] could be different from the share name on unity after
         # fail over. Parse the share name from export path.
@@ -387,24 +398,24 @@ class UnityClient(object):
         # share has is_replication_destination=False while non-active replica's
         # share has is_replication_destination=True.
         shares = self.get_share(share_id, active_replica['share_proto'])
-        src_share = None
-        dst_share = None
+        io_share = None
+        dr_share = None
         try:
             for share in shares:
-                if _is_dst(share):
-                    dst_share = share
+                if _is_io_active(share):
+                    io_share = share
                 else:
-                    src_share = share
+                    dr_share = share
         except TypeError:
             # shares is not iterable, which means it is a unity share instance,
             # not a list.
             share = shares
-            if _is_dst(share):
-                dst_share = share
+            if _is_io_active(share):
+                io_share = share
             else:
-                src_share = share
+                dr_share = share
 
-        return src_share, dst_share
+        return io_share, dr_share
 
     @staticmethod
     def is_replication_unplanned_failover(rep_session):
@@ -424,18 +435,11 @@ class UnityClient(object):
             enum.FAILED_OVER_WITH_SYNC_MIXED,
         ]
 
-    def is_replication_failover(self, resource, is_source=None):
-        rep_session = self.is_in_replication(resource, is_source=is_source)
+    def is_replication_failover(self, resource):
+        rep_session = self.is_in_replication(resource)
         if not rep_session:
-            if is_source is None:
-                role = 'any'
-            elif is_source:
-                role = 'source'
-            else:
-                role = 'destination'
-            LOG.info('resource: %(res)s is not participating as %(role)s side '
-                     'in any replication session',
-                     {'res': resource.name, 'role': role})
+            LOG.info('resource: %s is not participating in any replication',
+                     utils.repr(resource))
             return None, False
 
         return (rep_session,
@@ -466,38 +470,47 @@ class UnityClient(object):
             return False
         return True
 
-    def is_in_replication(self, resource, is_source=None):
+    @staticmethod
+    def is_replication_destination_side(rep_session):
+        return (rep_session.local_role ==
+                enums.ReplicationSessionReplicationRoleEnum.DESTINATION)
+
+    def is_in_replication(self, resource):
         """Checks if `resource` is participating in a replication session.
 
         The implementation is based on the fact that only one replication
         session per nas server or filesystem is supported on unity.
 
         :param resource: could be nas server or filesystem instance.
-        :param is_source: True - check if `resource` is the source of the
-            replication, False - check if `resource` is the destination of the
-            replication, None - just check if `resource` is participating in
-            any replication, no matter is the source or destination.
-
         :return the replication session in which the `resource` is
             participating.
         """
 
+        res_id = resource.get_id()
         if isinstance(resource,
                       storops.unity.resource.filesystem.UnityFileSystem):
-            resource = resource.storage_resource
+            # Use storage resource id as the filesystem's id to query.
+            res_id = resource.storage_resource.get_id()
 
-        if is_source or is_source is None:
-            rep_sessions = self.get_replication_session(
-                src_resource_id=resource.get_id()
-            )
-            if len(rep_sessions):
-                return rep_sessions[0]
-        if not is_source:
-            rep_sessions = self.get_replication_session(
-                dst_resource_id=resource.get_id()
-            )
-            if len(rep_sessions):
-                return rep_sessions[0]
+        rep_sessions = self.get_replication_session(src_resource_id=res_id)
+        if len(rep_sessions):
+            rep_session = rep_sessions[0]
+            LOG.debug('found replication session: %(rep)s of resource: '
+                      '%(res)s with src_resource_id=%(id)s',
+                      {'rep': rep_session.name,
+                       'res': utils.repr(resource),
+                       'id': res_id})
+            return rep_session
+
+        rep_sessions = self.get_replication_session(dst_resource_id=res_id)
+        if len(rep_sessions):
+            rep_session = rep_sessions[0]
+            LOG.debug('found replication session: %(rep)s of resource: '
+                      '%(res)s with dst_resource_id=%(id)s',
+                      {'rep': rep_session.name,
+                       'res': utils.repr(resource),
+                       'id': res_id})
+            return rep_session
         return None
 
     def enable_replication(self, resource, dst_pool_id, remote_system=None,
@@ -519,12 +532,12 @@ class UnityClient(object):
         :return: the created replication session.
         """
 
-        rep_session = self.is_in_replication(resource, is_source=True)
+        rep_session = self.is_in_replication(resource)
         if rep_session:
             # Only one replication session per resource is supported.
-            LOG.info('resource: %(nas)s already participates in a '
-                     'replication: %(rep)s',
-                     {'nas': resource.name, 'rep': rep_session})
+            LOG.info('resource: %(res)s already participates '
+                     'in a replication: %(rep)s',
+                     {'res': utils.repr(resource), 'rep': rep_session})
 
             # Check if the existing replication's destination system is as
             # expected.
@@ -534,7 +547,7 @@ class UnityClient(object):
                 raise exception.EMCUnityError(
                     err='the replication {rep} of resource: {res} not '
                         'target to the expected remote system: '
-                        '{remote}'.format(res=resource.name,
+                        '{remote}'.format(res=utils.repr(resource),
                                           rep=rep_session,
                                           remote=remote_system_name)
                 )
@@ -553,7 +566,7 @@ class UnityClient(object):
             )
         return rep_session
 
-    def disable_replication(self, resource, from_source=True):
+    def disable_replication(self, resource):
         """Delete the replication of `resource`.
 
         The implementation is based on the fact that only one replication
@@ -561,63 +574,63 @@ class UnityClient(object):
 
         :param resource: the replication of this resource will be deleted,
             could be a nas server or filesystem.
-        :param from_source: True - delete the replication from the source
-            resource, False - delete from the destination resource.
         :return None
         """
-        # Suppose the existing replication is valid. No need to check, ie. if
-        # the nas server is the source of the replication.
-        rep_session = self.is_in_replication(resource, is_source=from_source)
-        if rep_session:
-            try:
-                rep_session.delete()
-            except storops_ex.UnityFileResourceReplicationInUseError:
-                # This exception raised when deleting nas server replication
-                # and its filesystem replication still exists.
-                LOG.info('try to delete replication of nas server: %s but '
-                         'failed because there is still filesystem '
-                         'replication on the same nas server. Skip the '
-                         'deletion of nas server replication this time',
-                         resource.name)
-        else:
+        rep_session = self.is_in_replication(resource)
+        if not rep_session:
             LOG.info('resource: %s is not in a replication.'
                      'Do nothing for replication deletion',
-                     resource.name)
+                     utils.repr(resource))
+            return
 
-    def failover_replication(self, resource):
-        """Fail over the replication of `resource`.
+        if self.is_replication_destination_side(rep_session):
+            LOG.info('deleting the replication session: %s from the '
+                     'destination side, which would cause it not cleaned on '
+                     'the source side', rep_session.name)
+
+        try:
+            rep_session.delete()
+        except storops_ex.UnityFileResourceReplicationInUseError:
+            # This exception raised when deleting nas server replication
+            # and its filesystem replication still exists.
+            LOG.info('try to delete replication of nas server: %s but '
+                     'failed because there is still filesystem '
+                     'replication on the same nas server. Skip the '
+                     'deletion of nas server replication this time',
+                     utils.repr(resource))
+
+    def failover_replication(self, rep_session):
+        """Fail over the replication.
 
         This call must be made on the destination system of the replication
         session.
 
-        :param resource: the resource whose replication session will be failed
-            over.
+        :param rep_session: the replication session will be failed over.
         :return: None
         """
-        rep_session = self.is_in_replication(resource, is_source=False)
         if not rep_session:
-            LOG.info('resource: %s is not in a replication.'
-                     'Do nothing for replication failover',
-                     resource.name)
+            LOG.info('the replication session is none.'
+                     'Do nothing for replication failover')
             return
-        LOG.info('failing over the replication of resource: %s', resource.name)
+        LOG.info('failing over the replication session: %s', rep_session.name)
         rep_session.failover()
 
-    def failback_replication(self, resource):
-        """Fail back the replication of `resource`.
+    def failback_replication(self, rep_session):
+        """Fail back the replication.
 
-        This call must be made on the source system of the replication
+        This call must be made on the destination system of the replication
         session.
 
-        :param resource: the resource whose replication session will be failed
-            back.
+        :param rep_session: the replication session will be failed back.
         :return: None
         """
-        rep_session = self.is_in_replication(resource, is_source=True)
         if not rep_session:
-            LOG.info('resource: %s is not in a replication.'
-                     'Do nothing for replication failback',
-                     resource.name)
+            LOG.info('the replication session is none.'
+                     'Do nothing for replication failback')
             return
-        LOG.info('failing back the replication of resource: %s', resource.name)
+        LOG.info('failing back the replication session: %s', rep_session.name)
         rep_session.failback()
+
+
+class DeleteRepFromDestSideError(Exception):
+    pass

@@ -831,9 +831,9 @@ class UnityStorageConnection(driver.StorageConnection):
     @staticmethod
     def _is_system_down(_client, active_replica):
         try:
-            src_share, dst_share = _client.get_shares_of_replica(
+            io_share, dr_share = _client.get_shares_of_replica(
                 active_replica)
-            return False, src_share, dst_share
+            return False, io_share, dr_share
         except storops_ex.StoropsConnectTimeoutError as ex:
             LOG.info('the system of replica is down. Detail: %s', ex)
             return True, None, None
@@ -876,9 +876,9 @@ class UnityStorageConnection(driver.StorageConnection):
                 err='cannot delete active replica directly')
 
         dr_client = self.client
-        active_client = self._setup_replica_client(active_replica)
         is_dr_down, dr_io_shr, dr_dr_shr = self._is_system_down(
             dr_client, active_replica)
+        active_client = self._setup_replica_client(active_replica)
         is_active_down, act_io_shr, _ = self._is_system_down(
             active_client, active_replica)
 
@@ -892,7 +892,16 @@ class UnityStorageConnection(driver.StorageConnection):
                      'system no matter it is source or destination',
                      replica_id)
 
-            _delete_rep_from(active_client, act_io_shr)
+            nas_rep = active_client.is_in_replication(
+                act_io_shr.filesystem.nas_server)
+            is_rep_down = (nas_rep and
+                           active_client.is_replication_lost_communication(
+                               nas_rep))
+            if is_rep_down:
+                _delete_rep_from(active_client, act_io_shr)
+            else:
+                LOG.info('skip the deletion of replication sessions from '
+                         'active replica because they are still active')
 
             # Just delete the replication session from the active replica
             # system and not to delete the non-active replica share, its
@@ -969,55 +978,74 @@ class UnityStorageConnection(driver.StorageConnection):
         """
         active_replica = share_utils.get_active_replica(replica_list)
         dr_client = self.client
-        is_dr_down, dr_io_share, dr_share = self._is_system_down(
-            dr_client, active_replica)
-        # It's a LOCAL replication if dr_io_share is not None.
+        is_dr_down, _, dr_share = self._is_system_down(dr_client,
+                                                       active_replica)
+
         if is_dr_down:
             raise exception.EMCUnityError(
                 err='cannot promote the replica: {} whose system is '
                     'down'.format(replica['id'])
             )
 
-        # dr_share isn't None. But it doesn't mean the active replica system
-        # is the source side of the replication session.
-        # For example, the io side could be the destination side of a
-        # failed-over replication.
+        # To promote a replica, need to:
+        # 1. For a normal replication session,
+        # 1.1 if the source is available, fail over it with sync (planned).
+        # 1.2 otherwise, fail over it directly (unplanned).
+        # 2. For a failed-over replication session, fail back it.
 
-        # To promote a replica, we need to fail over a normal replication
-        # session or fail back a failed-over replication session.
+        active_client = self._setup_replica_client(active_replica)
+        is_active_down, io_share, _ = self._is_system_down(active_client,
+                                                           active_replica)
 
         nas_server = dr_share.filesystem.nas_server
-        nas_rep, is_failover = dr_client.is_replication_failover(nas_server)
+        _, is_failover = dr_client.is_replication_failover(nas_server)
 
-        def _promote(_client, _func):
-            nas_rep = _client.is_in_replication(nas_server)
+        def _promote(_client, _nas_server, _func):
+            nas_rep = _client.is_in_replication(_nas_server)
             _func(nas_rep)
 
         if is_failover:
+            # The io side (active replica) is the destination side of a
+            # failed-over replication session.
+
             # Going to fail back the replication session on active replica.
-            LOG.debug('the replication session of share: %s is failed over',
+            LOG.debug('the replication session of share: %s is failed over. '
+                      'The active replica is the destination side of the '
+                      'replication session and the replica being promoted is '
+                      'the source side of the replication session',
                       unity_utils.repr(dr_share))
-            active_client = self._setup_replica_client(active_replica)
-            is_active_down, io_share, _ = self._is_system_down(
-                active_client, active_replica)
             if is_active_down:
-                raise exception.EMCUnityError(
-                    err='failed to fail back the replication session on the '
-                        'active replica system because it is down'
-                )
-            nas_server = io_share.filesystem.nas_server
-            LOG.debug('failing back the replication session of nas server: %s',
-                      unity_utils.repr(nas_server))
-            _promote(active_client, active_client.failback_replication)
+                LOG.info('the active replica system is down. Deleting the '
+                         'replication session from the system of the replica '
+                         'being promoted')
+                dr_client.disable_replication(dr_share.filesystem)
+                dr_client.disable_replication(dr_share.filesystem.nas_server)
+            else:
+                nas_server = io_share.filesystem.nas_server
+                LOG.debug('failing back the replication session of nas '
+                          'server: %s',
+                          unity_utils.repr(nas_server))
+                _promote(active_client, nas_server,
+                         active_client.failback_replication)
         else:
-            LOG.debug('failing over the replication session of nas server: %s',
-                      unity_utils.repr(nas_server))
-            is_local_rep = dr_io_share is not None
-            # Always failover with sync for the local replication, which means
-            # planned failover.
-            _promote(dr_client,
-                     functools.partial(dr_client.failover_replication,
-                                       sync=is_local_rep))
+            is_planned = not is_active_down
+            if is_planned:
+                _client = active_client
+                failover_func = functools.partial(
+                    active_client.failover_replication, sync=True
+                )
+                _share = io_share
+            else:
+                _client = dr_client
+                failover_func = dr_client.failover_replication
+                _share = dr_share
+
+            nas_server = _share.filesystem.nas_server
+            LOG.debug('failing over the replication session of nas '
+                      'server: %(nas)s, sync: %(sync)s',
+                      {'nas': unity_utils.repr(nas_server),
+                       'sync': is_planned})
+            _promote(_client, nas_server, failover_func)
 
         # No need to fail over/back filesystem replication because it will be
         # failed over/back with nas server's.

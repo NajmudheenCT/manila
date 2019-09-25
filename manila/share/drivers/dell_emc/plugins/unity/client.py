@@ -471,6 +471,14 @@ class UnityClient(object):
         return True
 
     @staticmethod
+    def is_replication_lost_communication(rep_session):
+        enum = enums.ReplicationOpStatusEnum
+        return rep_session.status in [
+            enum.LOST_COMMUNICATION,
+            enum.LOST_SYNC_COMMUNICATION,
+        ]
+
+    @staticmethod
     def is_replication_destination_side(rep_session):
         return (rep_session.local_role ==
                 enums.ReplicationSessionReplicationRoleEnum.DESTINATION)

@@ -114,9 +114,9 @@ class UnityClient(object):
             return self.system.get_filesystem(name=share_name)
 
     @staticmethod
-    def delete_filesystem(filesystem):
+    def delete_filesystem(filesystem, force_snap_delete=False):
         try:
-            filesystem.delete()
+            filesystem.delete(force_snap_delete=force_snap_delete)
         except storops_ex.UnityResourceNotFoundError:
             LOG.info('Filesystem %s is already removed.', filesystem.name)
 

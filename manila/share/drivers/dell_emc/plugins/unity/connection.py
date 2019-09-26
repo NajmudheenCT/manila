@@ -848,7 +848,8 @@ class UnityStorageConnection(driver.StorageConnection):
             LOG.info('share: %s is on the destination nas server. '
                      'Deleting its filesystem directly',
                      unity_utils.repr(share))
-            self.client.delete_filesystem(share.filesystem)
+            self.client.delete_filesystem(share.filesystem,
+                                          force_snap_delete=True)
 
         # Then delete nas server if it has no filesystem anymore.
         nas_server_name = share.filesystem.nas_server.name

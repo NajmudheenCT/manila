@@ -537,7 +537,7 @@ class UnityClient(object):
             provisioned.
         :param remote_system: the remote system of the replication.
         :param max_out_of_sync_minutes: new max minutes out of sync.
-        :return: the created replication session.
+        :return the created replication session.
         """
 
         rep_session = self.is_in_replication(resource)
@@ -618,7 +618,7 @@ class UnityClient(object):
             failing over the asynchronous replication session or keep them in
             sync after failing over the synchronous replication session.
             False - don't sync.
-        :return: None
+        :return None
         """
         if not rep_session:
             LOG.info('the replication session is none.'
@@ -634,7 +634,7 @@ class UnityClient(object):
         session.
 
         :param rep_session: the replication session will be failed back.
-        :return: None
+        :return None
         """
         if not rep_session:
             LOG.info('the replication session is none.'
@@ -642,6 +642,17 @@ class UnityClient(object):
             return
         LOG.info('failing back the replication session: %s', rep_session.name)
         rep_session.failback()
+
+    def sync_fs_replications(self, nas_server):
+        """Sync all the filesystem replication sessions.
+
+        :param nas_server: the nas server to get the filesystems.
+        :return None
+        """
+        for fs in filter(None, nas_server.filesystems):
+            fs_rep = self.is_in_replication(fs)
+            if fs_rep:
+                fs_rep.sync()
 
 
 class DeleteRepFromDestSideError(Exception):

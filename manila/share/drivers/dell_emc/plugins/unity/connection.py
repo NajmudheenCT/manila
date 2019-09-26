@@ -1134,6 +1134,23 @@ class UnityStorageConnection(driver.StorageConnection):
         fs = io_share.filesystem
         fs_rep, is_failover = active_client.is_replication_failover(fs)
 
+        if not fs_rep:
+            LOG.debug('the filesystem: %(fs)s of active replica is not '
+                      'participating in any replication session. Do nothing '
+                      'for update_replica_state of replica: %(rep)s',
+                      {'fs': unity_utils.repr(fs), 'rep': replica['id']})
+            return const.STATUS_ERROR
+        if fs_rep.remote_system.name != dr_client.get_serial_number():
+            LOG.debug('the filesystem: %(fs)s of active replica is now '
+                      'replicated to target: %(unity)s, but the updating '
+                      'replica: %(rep) is on unity: %(rep_sys)s. They are '
+                      'different unity systems',
+                      {'fs': unity_utils.repr(fs),
+                       'unity': fs_rep.remote_system.name,
+                       'rep': replica['id'],
+                       'rep_sys': dr_client.get_serial_number()})
+            return const.STATUS_ERROR
+
         if is_failover:
             # Going to resume the replication session on active replica.
             LOG.debug('the replication session of share: %s is failed over',
@@ -1143,7 +1160,12 @@ class UnityStorageConnection(driver.StorageConnection):
                       unity_utils.repr(nas_server))
             nas_rep = active_client.is_in_replication(nas_server)
             nas_rep.resume()
-            nas_rep.sync()
+            # Manually sync all replication sessions of filesystems on the
+            # nas_server or it could fail when failover the nas_server again
+            # due to its filesystems replications may be still syncing.
+            # TODO(ryan): use nas_server.sync when it handles auto-syncing fs
+            # replications correctly.
+            active_client.sync_fs_replications(nas_server)
         else:
             LOG.debug('syncing the replication session of filesystem: %s',
                       unity_utils.repr(fs))

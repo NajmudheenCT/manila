@@ -361,6 +361,17 @@ class UnityClient(object):
         return self.system.get_replication_session(
             src_resource_id=src_resource_id, dst_resource_id=dst_resource_id)
 
+    @staticmethod
+    def is_share_io_active(share):
+        is_dst = share.filesystem.nas_server.is_replication_destination
+        LOG.debug('share: %(shr)s, fs: %(fs)s, '
+                  'nas server: %(nas)s, is_dst: %(is_dst)s',
+                  {'shr': utils.repr(share),
+                   'fs': utils.repr(share.filesystem),
+                   'nas': utils.repr(share.filesystem.nas_server),
+                   'is_dst': is_dst})
+        return not is_dst
+
     def get_shares_of_replica(self, active_replica):
         """Gets backend shares of the replica.
 
@@ -374,16 +385,6 @@ class UnityClient(object):
             Both of io_share and dr_share are not None for local replication
             because these two shares are with same name.
         """
-
-        def _is_io_active(s):
-            is_dst = s.filesystem.storage_resource.is_replication_destination
-            LOG.debug('share: %(shr)s, fs: %(fs)s, '
-                      'res: %(res)s, is_dst: %(is_dst)s',
-                      {'shr': utils.repr(s), 'name': s.name,
-                       'fs': s.filesystem.get_id(),
-                       'res': s.filesystem.storage_resource.get_id(),
-                       'is_dst': is_dst})
-            return not is_dst
 
         # replica['id'] could be different from the share name on unity after
         # fail over. Parse the share name from export path.
@@ -402,7 +403,7 @@ class UnityClient(object):
         dr_share = None
         try:
             for share in shares:
-                if _is_io_active(share):
+                if self.is_share_io_active(share):
                     io_share = share
                 else:
                     dr_share = share
@@ -410,7 +411,7 @@ class UnityClient(object):
             # shares is not iterable, which means it is a unity share instance,
             # not a list.
             share = shares
-            if _is_io_active(share):
+            if self.is_share_io_active(share):
                 io_share = share
             else:
                 dr_share = share

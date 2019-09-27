@@ -388,12 +388,14 @@ class UnityStorageConnection(driver.StorageConnection):
 
     def ensure_share(self, context, share, share_server):
         """Ensure that the share is exported."""
-        share_name = share['id']
+        share_name = unity_utils.get_share_id(share)
         share_proto = share['share_proto']
 
         backend_share = self.client.get_share(share_name, share_proto)
         if not backend_share.existed:
             raise exception.ShareNotFound(share_id=share_name)
+        if not self.client.is_share_io_active(backend_share):
+            return []
 
     def update_share_stats(self, stats_dict):
         """Communicate with EMCNASClient to get the stats."""
@@ -1176,6 +1178,38 @@ class UnityStorageConnection(driver.StorageConnection):
         return (const.REPLICA_STATE_IN_SYNC
                 if active_client.is_replication_in_sync(fs_rep)
                 else const.REPLICA_STATE_OUT_OF_SYNC)
+
+    def _choose_non_destination_server(self, share_servers):
+        # When the nas server is in destination mode, it cannot be mounted to
+        # read and write.
+        for share_server in share_servers:
+            backend_server_name = self._get_server_name(share_server)
+            try:
+                nas_server = self.client.get_nas_server(backend_server_name)
+                if not nas_server.is_replication_destination:
+                    return share_server
+            except storops_ex.UnityResourceNotFoundError:
+                LOG.info('failed to get NAS server %s when validating if it '
+                         'is in destination mode',
+                         backend_server_name)
+        return None
+
+    def choose_share_server_compatible_with_share(self, context, share_servers,
+                                                  share, snapshot=None,
+                                                  share_group=None):
+        # If creating in a share group, use its share server
+        if share_group:
+            for share_server in share_servers:
+                if (share_group.get('share_server_id') ==
+                        share_server['id']):
+                    return share_server
+            return None
+        return self._choose_non_destination_server(share_servers)
+
+    def choose_share_server_compatible_with_share_group(
+            self, context, share_servers, share_group_ref,
+            share_group_snapshot=None):
+        return self._choose_non_destination_server(share_servers)
 
 
 class DeleteRepSessionError(Exception):

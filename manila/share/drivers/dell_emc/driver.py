@@ -248,3 +248,46 @@ class EMCShareDriver(driver.ShareDriver):
                                                 access_rules,
                                                 replica_snapshots,
                                                 share_server=None)
+
+    def choose_share_server_compatible_with_share(self, context, share_servers,
+                                                  share, snapshot=None,
+                                                  share_group=None):
+        """Method that allows driver to choose share server for provided share.
+
+        If compatible share-server is not found, method should return None.
+
+        :param context: Current context
+        :param share_servers: list with share-server models
+        :param share:  share model
+        :param snapshot: snapshot model
+        :param share_group: ShareGroup model with shares
+        :returns: share-server or None
+        """
+        try:
+            return self.plugin.choose_share_server_compatible_with_share(
+                context, share_servers, share,
+                snapshot=snapshot, share_group=share_group,
+            )
+        except NotImplementedError:
+            return super(EMCShareDriver,
+                         self).choose_share_server_compatible_with_share(
+                context, share_servers, share,
+                snapshot=snapshot, share_group=share_group,
+            )
+
+    def choose_share_server_compatible_with_share_group(
+            self, context, share_servers, share_group_ref,
+            share_group_snapshot=None):
+
+        try:
+            return self.plugin.choose_share_server_compatible_with_share_group(
+                context, share_servers, share_group_ref,
+                share_group_snapshot=share_group_snapshot,
+            )
+        except NotImplementedError:
+            return super(EMCShareDriver,
+                         self).choose_share_server_compatible_with_share_group(
+                context, share_servers, share_group_ref,
+                share_group_snapshot=share_group_snapshot,
+            )
+

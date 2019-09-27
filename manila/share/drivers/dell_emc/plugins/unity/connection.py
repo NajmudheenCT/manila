@@ -275,7 +275,7 @@ class UnityStorageConnection(driver.StorageConnection):
 
     def delete_share(self, context, share, share_server=None):
         """Delete a share."""
-        share_name = share['id']
+        share_name = unity_utils.get_share_id(share)
         try:
             backend_share = self.client.get_share(share_name,
                                                   share['share_proto'])

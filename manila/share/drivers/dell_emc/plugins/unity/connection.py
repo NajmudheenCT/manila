@@ -252,14 +252,25 @@ class UnityStorageConnection(driver.StorageConnection):
 
     def _delete_backend_share(self, backend_share):
         # Share created by the API create_share_from_snapshot()
+        ignore_share = None
         if self._is_share_from_snapshot(backend_share):
             filesystem = backend_share.snap.filesystem
             self.client.delete_snapshot(backend_share.snap)
         else:
             filesystem = backend_share.filesystem
-            self.client.delete_share(backend_share)
+            try:
+                self.client.delete_share(backend_share)
+            except storops_ex.UnityDeleteShareFromDestNasServerError:
+                # Unity doesn't allow to delete the share which on the
+                # destination nas server. If that is the case, delete the
+                # filesystem directly.
+                LOG.info('share: %s is on the destination nas server. '
+                         'Skip the share deletion and will delete its '
+                         'filesystem directly',
+                         unity_utils.repr(backend_share))
+                ignore_share = backend_share
 
-        if self._is_isolated_filesystem(filesystem):
+        if self._is_isolated_filesystem(filesystem, ignore_share=ignore_share):
             self.client.delete_filesystem(filesystem)
 
     def delete_share(self, context, share, share_server=None):
@@ -706,12 +717,19 @@ class UnityStorageConnection(driver.StorageConnection):
         self.client.nfs_deny_access(share['id'], access['access_to'])
 
     @staticmethod
-    def _is_isolated_filesystem(filesystem):
+    def _is_isolated_filesystem(filesystem, ignore_share=None):
         filesystem.update()
-        return (
-            not filesystem.has_snap() and
-            not (filesystem.cifs_share or filesystem.nfs_share)
-        )
+        if filesystem.has_snap():
+            return False
+
+        shares = filesystem.cifs_share or filesystem.nfs_share
+        if shares is None:
+            return True  # filesystem has no snapshot nor shares
+
+        if ignore_share:
+            shares = [s for s in shares
+                      if s.get_id() != ignore_share.get_id()]
+        return not shares
 
     @staticmethod
     def _is_share_from_snapshot(share):
@@ -841,17 +859,8 @@ class UnityStorageConnection(driver.StorageConnection):
             return True, None, None
 
     def _delete_replica_resource(self, share):
-        try:
-            # First delete share and filesystem.
-            self._delete_backend_share(share)
-        except storops_ex.UnityDeleteShareFromDestNasServerError:
-            # Unity doesn't allow to delete the share which on the destination
-            # nas server. If that is the case, delete the filesystem directly.
-            LOG.info('share: %s is on the destination nas server. '
-                     'Deleting its filesystem directly',
-                     unity_utils.repr(share))
-            self.client.delete_filesystem(share.filesystem,
-                                          force_snap_delete=True)
+        # First delete share and filesystem.
+        self._delete_backend_share(share)
 
         # Then delete nas server if it has no filesystem anymore.
         nas_server_name = share.filesystem.nas_server.name

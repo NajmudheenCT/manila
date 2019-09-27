@@ -932,11 +932,11 @@ class UnityStorageConnection(driver.StorageConnection):
             self._delete_replica_resource(dr_dr_shr)
 
         elif dr_io_shr:
-            # This is a REMOTE replication session with dr replica share as the
-            # io side.
-            # Cannot be here because the dr replica cannot be io active.
-            raise exception.EMCUnityError(
-                err='the dr replica cannot be io active')
+            # This replica system is same as the active replica system and the
+            # deleting replica is not in any replication session.
+            LOG.info('the deleting replica: %s is not involved in any '
+                     'replication session. Do nothing for replica deletion',
+                     replica_id)
 
         elif dr_dr_shr:
             # This is a REMOTE replication session with the deleting replica
@@ -977,10 +977,10 @@ class UnityStorageConnection(driver.StorageConnection):
             self._delete_replica_resource(dr_dr_shr)
 
         else:
-            # dr_src_shr and dr_dst_shr cannot be ALL None.
-            raise exception.EMCUnityError(
-                err='cannot get any backend share '
-                    'for replica: {}'.format(replica_id))
+            # dr_io_shr and dr_dr_shr are ALL None.
+            LOG.info('cannot get the backend share of the deleting replica: '
+                     '%s',
+                     replica_id)
 
     def promote_replica(self, context, replica_list, replica, access_rules,
                         share_server=None):

@@ -250,7 +250,7 @@ class UnityStorageConnection(driver.StorageConnection):
 
         return locations
 
-    def _delete_backend_share(self, backend_share):
+    def _delete_backend_share(self, backend_share, delete_nas_server=False):
         # Share created by the API create_share_from_snapshot()
         ignore_share = None
         if self._is_share_from_snapshot(backend_share):
@@ -273,6 +273,25 @@ class UnityStorageConnection(driver.StorageConnection):
         if self._is_isolated_filesystem(filesystem, ignore_share=ignore_share):
             self.client.delete_filesystem(filesystem)
 
+        nas_server_name = backend_share.filesystem.nas_server.name
+
+        # Two cases trying to delete the share's nas server:
+        # 1. If the nas server is used for dr replication destination
+        # originally and then promoted as active. The nas server in this case
+        # is not managed by manila and needs to delete manually.
+        # 2. If the share is a dr replica.
+        if (nas_server_name.starts_with(client.NAME_PREFIX_REP_NAS_SERVER)
+                or delete_nas_server):
+            LOG.debug('deleting nas server: name=%(name)s, '
+                      'delete_nas_server=%(flag)s',
+                      {'name': nas_server_name, 'flag': delete_nas_server})
+            try:
+                self.client.delete_nas_server(nas_server_name)
+            except storops_ex.UnityNasServerHasFsError:
+                LOG.info('nas server of share: %s is used by other '
+                         'filesystems/shares. Skip the deletion of nas server',
+                         unity_utils.repr(backend_share))
+
     def delete_share(self, context, share, share_server=None):
         """Delete a share."""
         share_name = unity_utils.get_share_id(share)
@@ -284,7 +303,7 @@ class UnityStorageConnection(driver.StorageConnection):
                         share_name)
             return
 
-        self._delete_backend_share(backend_share)
+        self._delete_backend_share(backend_share, delete_nas_server=False)
 
     def extend_share(self, share, new_size, share_server=None):
         backend_share = self.client.get_share(share['id'],
@@ -858,18 +877,6 @@ class UnityStorageConnection(driver.StorageConnection):
             LOG.info('the system of replica is down. Detail: %s', ex)
             return True, None, None
 
-    def _delete_replica_resource(self, share):
-        # First delete share and filesystem.
-        self._delete_backend_share(share)
-
-        # Then delete nas server if it has no filesystem anymore.
-        nas_server_name = share.filesystem.nas_server.name
-        try:
-            self.client.delete_nas_server(nas_server_name)
-        except storops_ex.UnityNasServerHasFsError:
-            LOG.info('nas server is used by filesystem. Skip the deletion of '
-                     'nas server')
-
     def delete_replica(self, context, replica_list, replica_snapshots,
                        replica, share_server=None):
         """Delete a replica.
@@ -929,7 +936,7 @@ class UnityStorageConnection(driver.StorageConnection):
                        'dst': unity_utils.repr(dr_dr_shr)})
 
             _delete_rep_from(dr_client, dr_io_shr)
-            self._delete_replica_resource(dr_dr_shr)
+            self._delete_backend_share(dr_dr_shr, delete_nas_server=True)
 
         elif dr_io_shr:
             # This replica system is same as the active replica system and the
@@ -974,7 +981,7 @@ class UnityStorageConnection(driver.StorageConnection):
                               'source side which is the active replica system')
                     _delete_rep_from(active_client, act_io_shr)
 
-            self._delete_replica_resource(dr_dr_shr)
+            self._delete_backend_share(dr_dr_shr, delete_nas_server=True)
 
         else:
             # dr_io_shr and dr_dr_shr are ALL None.

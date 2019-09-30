@@ -32,6 +32,8 @@ from manila.share.drivers.dell_emc.plugins.unity import utils
 
 LOG = log.getLogger(__name__)
 
+NAME_PREFIX_REP_NAS_SERVER = 'OS_DR_'
+
 
 class UnityClient(object):
     def __init__(self, host, username, password):
@@ -579,7 +581,8 @@ class UnityClient(object):
                     resource.replicate_with_dst_resource_provisioning(
                         max_out_of_sync_minutes,
                         dst_pool_id,
-                        dst_nas_server_name='OS-DR-' + resource.name,
+                        dst_nas_server_name=(NAME_PREFIX_REP_NAS_SERVER
+                                             + resource.name),
                         remote_system=remote_system,
                     )
                 )

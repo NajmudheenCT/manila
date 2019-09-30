@@ -719,7 +719,7 @@ class UnityStorageConnection(driver.StorageConnection):
     @staticmethod
     def _is_isolated_filesystem(filesystem, ignore_share=None):
         filesystem.update()
-        if filesystem.has_snap():
+        if filesystem.has_snap(ignore_system_snap=True):
             return False
 
         shares = filesystem.cifs_share or filesystem.nfs_share

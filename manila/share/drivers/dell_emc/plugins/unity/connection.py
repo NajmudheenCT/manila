@@ -1019,10 +1019,6 @@ class UnityStorageConnection(driver.StorageConnection):
         nas_server = dr_share.filesystem.nas_server
         _, is_failover = dr_client.is_replication_failover(nas_server)
 
-        def _promote(_client, _nas_server, _func):
-            nas_rep = _client.is_in_replication(_nas_server)
-            _func(nas_rep)
-
         if is_failover:
             # The io side (active replica) is the destination side of a
             # failed-over replication session.
@@ -1044,27 +1040,20 @@ class UnityStorageConnection(driver.StorageConnection):
                 LOG.debug('failing back the replication session of nas '
                           'server: %s',
                           unity_utils.repr(nas_server))
-                _promote(active_client, nas_server,
-                         active_client.failback_replication)
+                active_client.failback(nas_server)
         else:
+            # Try planned fail over first if the active replica system is up.
             is_planned = not is_active_down
             if is_planned:
-                _client = active_client
-                failover_func = functools.partial(
-                    active_client.failover_replication, sync=True
-                )
-                _share = io_share
+                nas_server = io_share.filesystem.nas_server
+                LOG.debug('planned failing over the replication session of '
+                          'nas server: %s', unity_utils.repr(nas_server))
+                active_client.failover(nas_server, is_planned=True)
             else:
-                _client = dr_client
-                failover_func = dr_client.failover_replication
-                _share = dr_share
-
-            nas_server = _share.filesystem.nas_server
-            LOG.debug('failing over the replication session of nas '
-                      'server: %(nas)s, sync: %(sync)s',
-                      {'nas': unity_utils.repr(nas_server),
-                       'sync': is_planned})
-            _promote(_client, nas_server, failover_func)
+                nas_server = dr_share.filesystem.nas_server
+                LOG.debug('unplanned failing over the replication session of '
+                          'nas server: %s', unity_utils.repr(nas_server))
+                dr_client.failover(nas_server, is_planned=False)
 
         # No need to fail over/back filesystem replication because it will be
         # failed over/back with nas server's.
@@ -1179,12 +1168,6 @@ class UnityStorageConnection(driver.StorageConnection):
                       unity_utils.repr(nas_server))
             nas_rep = active_client.is_in_replication(nas_server)
             nas_rep.resume()
-            # Manually sync all replication sessions of filesystems on the
-            # nas_server or it could fail when failover the nas_server again
-            # due to its filesystems replications may be still syncing.
-            # TODO(ryan): use nas_server.sync when it handles auto-syncing fs
-            # replications correctly.
-            active_client.sync_fs_replications(nas_server)
         else:
             LOG.debug('syncing the replication session of filesystem: %s',
                       unity_utils.repr(fs))

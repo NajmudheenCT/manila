@@ -665,12 +665,34 @@ class UnityClient(object):
         LOG.info('failing back the replication session: %s', rep_session.name)
         rep_session.failback()
 
+    def failover(self, nas_server, is_planned=True):
+        nas_rep = self.is_in_replication(nas_server)
+
+        sync = True if is_planned else None
+        try:
+            self.failover_replication(nas_rep, sync=sync)
+        except storops_ex.UnityFailoverNasRepWithFsRepOutOfSyncError:
+            # This error happens when planned failing over a nas server
+            # replication and its filesystem is of state auto-syncing.
+            # The filesystem replication could be auto-syncing after it is
+            # newly created or resumed.
+            self.sync_fs_replications(nas_server)
+            self.failover_replication(nas_rep, sync=sync)
+
+    def failback(self, nas_server):
+        nas_rep = self.is_in_replication(nas_server)
+        self.failback_replication(nas_rep)
+
     def sync_fs_replications(self, nas_server):
         """Sync all the filesystem replication sessions.
 
         :param nas_server: the nas server to get the filesystems.
         :return None
         """
+        # TODO(ryan): use nas_server.sync when it handles auto-syncing fs
+        #   replications correctly.
+        # The workaround is to manually sync all replication sessions of
+        # filesystems on the nas_server.
         for fs in filter(None, nas_server.filesystems):
             fs_rep = self.is_in_replication(fs)
             if fs_rep:

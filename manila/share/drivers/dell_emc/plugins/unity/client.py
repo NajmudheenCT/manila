@@ -566,13 +566,31 @@ class UnityClient(object):
                 rep_session.modify(
                     max_time_out_of_sync=max_out_of_sync_minutes)
         else:
-            rep_session = (
-                resource.replicate_with_dst_resource_provisioning(
-                    max_out_of_sync_minutes,
-                    dst_pool_id,
-                    remote_system=remote_system,
+            if isinstance(resource,
+                          storops.unity.resource.nas_server.UnityNasServer):
+                # Create the destination nas server with the name having
+                # specified prefix. Then we can delete the nas server
+                # after its last share/replica is deleted. The destination nas
+                # server could be active after promoting a replica, but it is
+                # not managed by manila and no new share will be created on it.
+                # So, we can delete the destination nas server safely even it
+                # is active.
+                rep_session = (
+                    resource.replicate_with_dst_resource_provisioning(
+                        max_out_of_sync_minutes,
+                        dst_pool_id,
+                        dst_nas_server_name='OS-DR-' + resource.name,
+                        remote_system=remote_system,
+                    )
                 )
-            )
+            else:
+                rep_session = (
+                    resource.replicate_with_dst_resource_provisioning(
+                        max_out_of_sync_minutes,
+                        dst_pool_id,
+                        remote_system=remote_system,
+                    )
+                )
         return rep_session
 
     def disable_replication(self, resource):
